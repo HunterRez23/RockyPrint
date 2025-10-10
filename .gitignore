@@ -1,0 +1,31 @@
+# dependencias
+node_modules/
+**/node_modules/
+
+# builds y empaquetados
+dist/
+out/
+release/
+*.asar
+*.map
+
+# binarios de Electron
+**/electron/dist/
+*.exe
+*.dmg
+*.AppImage
+*.zip
+
+# entornos / secretos
+.env
+*.local
+
+# SO / editores
+.DS_Store
+Thumbs.db
+*.log
+*.lock
+npm-debug.log*
+yarn-error.log*
+.vscode/
+.idea/

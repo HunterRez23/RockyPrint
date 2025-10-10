@@ -1,0 +1,35 @@
+:root{
+  --bg:#0b1220; --card:#121a2c; --text:#e6edff; --muted:#a9b6d3;
+  --accent:#5b7cfa; --accent-2:#3e5ae0; --danger:#ff7a7a; --ring:#ffb454;
+  --shadow:0 20px 60px rgba(0,0,0,.35);
+  font-family: Inter, system-ui, Segoe UI, Roboto, Arial, sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,#132144 0%,transparent 60%), var(--bg); color:var(--text)}
+.screen{height:100%; display:grid; place-items:center; padding:24px}
+.card{
+  width:min(420px, 92vw);
+  background:var(--card);
+  border:1px solid rgba(255,255,255,.05);
+  border-radius:16px; padding:24px 24px 18px;
+  box-shadow:var(--shadow);
+  display:grid; gap:10px;
+}
+.logo{font-weight:700; letter-spacing:.3px; opacity:.9}
+h1{margin:2px 0 10px; font-size:20px}
+label{font-size:12px; color:var(--muted)}
+input,select{
+  width:100%; font-size:14px; padding:10px 12px; color:var(--text);
+  background:#0e1526; border:1px solid rgba(255,255,255,.08); border-radius:10px;
+  outline:none; transition:border .15s, box-shadow .15s;
+}
+input:focus,select:focus{border-color:var(--ring); box-shadow:0 0 0 3px rgba(255,180,84,.15)}
+.btn{
+  margin-top:4px; padding:10px 14px; border-radius:10px; border:0;
+  background:linear-gradient(180deg,var(--accent),var(--accent-2));
+  color:#fff; font-weight:600; cursor:pointer;
+}
+.btn:disabled{opacity:.6; cursor:not-allowed}
+.err{min-height:18px; margin:6px 0 2px; color:var(--danger); font-size:12px}
+.hint{margin:2px 0 0; font-size:12px; color:var(--muted)}

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600">
+  <title>Tarjeta de presentación (85x55 proporcional)</title>
+  <rect x="50" y="50" width="900" height="500" rx="30" ry="30" fill="none" stroke="#000" stroke-width="20"/>
+  <!-- guía de márgenes (opcionales, quita si no las necesitas) -->
+  <rect x="100" y="100" width="800" height="400" fill="none" stroke="#000" stroke-dasharray="20 20" stroke-width="6" opacity="0.5"/>
+</svg>

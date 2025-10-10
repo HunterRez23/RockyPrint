@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pedidos — Tarjetas en grilla</title>
+  <link rel="stylesheet" href="css/pedidos.css">
+</head>
+<body>
+<header class="header">
+  <div class="wrap header-row">
+    <div class="brand">📦 Pedidos — Imprenta</div>
+    <span class="badge">Tarjetas</span>
+    <div class="spacer"></div>
+    <button class="btn" id="exportCsvBtn">Exportar CSV</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <!-- Filtros -->
+  <section class="filters">
+    <div>
+      <label for="q">Buscar (ID, cliente, producto)</label>
+      <input id="q" placeholder="Ej. 2025-0123 / Offset / Lona" />
+    </div>
+    <div>
+      <label for="estado">Estado</label>
+      <select id="estado">
+        <option value="">Todos</option>
+        <option>Pendiente</option>
+        <option>En progreso</option>
+        <option>Listo</option>
+        <option>En pausa</option>
+      </select>
+    </div>
+    <div>
+      <label for="desde">Desde (entrega)</label>
+      <input type="date" id="desde">
+    </div>
+    <div>
+      <label for="hasta">Hasta (entrega)</label>
+      <input type="date" id="hasta">
+    </div>
+    <div>
+      <button class="btn" id="filtrarBtn">Aplicar filtros</button>
+    </div>
+  </section>
+
+  <!-- KPIs -->
+  <section class="kpis">
+    <div class="kpi"><div class="kpi-h">Total</div><div class="kpi-v" id="kpiTotal">0</div></div>
+    <div class="kpi"><div class="kpi-h">En progreso</div><div class="kpi-v" id="kpiProg">0</div></div>
+    <div class="kpi"><div class="kpi-h">Atrasados</div><div class="kpi-v" id="kpiLate">0</div></div>
+    <div class="kpi"><div class="kpi-h">Completados (30 días)</div><div class="kpi-v" id="kpiDone30">0</div></div>
+  </section>
+
+  <!-- Grilla de tarjetas -->
+  <section class="grid" id="grid">
+    <!-- tarjetas renderizadas por JS -->
+  </section>
+
+  <p class="note">
+    💡 Arrastra una tarjeta usando el asa <b class="handle demo">⋮⋮</b> para cambiar el orden (prioridad visual).  
+    Las entregas en <b class="late">rojo</b> están atrasadas.
+  </p>
+</main>
+
+<script src="js/pedidos.js"></script>
+</body>
+</html>

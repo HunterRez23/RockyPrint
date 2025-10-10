@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 800">
+  <title>Lona / Banner simple</title>
+  <rect x="50" y="100" width="1300" height="600" fill="none" stroke="#000" stroke-width="20"/>
+  <!-- ojillos -->
+  <g fill="none" stroke="#000" stroke-width="14">
+    <circle cx="90" cy="140" r="20"/>
+    <circle cx="1310" cy="140" r="20"/>
+    <circle cx="90" cy="660" r="20"/>
+    <circle cx="1310" cy="660" r="20"/>
+  </g>
+</svg>

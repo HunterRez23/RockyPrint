@@ -1,0 +1,58 @@
+{
+  "name": "rockyprint",
+  "version": "1.0.0",
+  "main": "app/main/main.js",
+  "type": "module",
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env NODE_ENV=development electron .",
+    "build": "electron-builder",
+    "db:up": "psql \"$PG_URL\" -f sql/001_init.sql",
+    "db:seed": "psql \"$PG_URL\" -f sql/002_seed.sql"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "electron-store": "^11.0.2",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.rockyprint.app",
+    "asar": true,
+    "directories": {
+      "buildResources": "build"
+    },
+    "files": [
+      "app/**/*",
+      "public/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "sql",
+        "to": "sql",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "assets",
+        "to": "assets",
+        "filter": ["**/*"]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Utility"
+    }
+  }
+}
