@@ -1,620 +1,483 @@
-document.addEventListener('DOMContentLoaded', () => {
-  const artboard = document.getElementById('artboard');
-  const frameLabel = document.getElementById('frameLabel');
-  const tplNameInput = document.getElementById('tplName');
-  const widthInput = document.getElementById('widthInput');
-  const heightInput = document.getElementById('heightInput');
-  const bleed = document.getElementById('bleed');
-  const bleedSelect = document.getElementById('bleedSelect');
-  const toggleGrid = document.getElementById('toggleGrid');
-  const toggleGuides = document.getElementById('toggleGuides');
-  const notesList = document.getElementById('notesList');
-  const newNoteText = document.getElementById('newNoteText');
-  const btnAddNote = document.getElementById('btnAddNote');
-  const btnClearNotes = document.getElementById('btnClearNotes');
-  const zoomLabel = document.getElementById('zoomLabel');
-  const posLabel = document.getElementById('posLabel');
-  const zoomIn = document.getElementById('zoomIn');
-  const zoomOut = document.getElementById('zoomOut');
-  const zoomReset = document.getElementById('zoomReset');
-  const templateRadios = document.getElementById('templateRadios');
-  const stage = document.getElementById('stage');
-  const btnThemeToggle = document.getElementById('btnThemeToggle');
-  const featureRow = document.getElementById('featureRow');
-  const featureSelect = document.getElementById('featureSelect');
-  const templateVisual = document.getElementById('templateVisual');
-  const body = document.body;
+// app/renderer/js/lienzo.js
+(() => {
+  const $ = (q, c = document) => c.querySelector(q);
+  const $$ = (q, c = document) => Array.from(c.querySelectorAll(q));
 
-  /* --- Estado --- */
-  let zoom = 1;              // 1 = 100%
-  let noteCounter = notesList.querySelectorAll('.note').length || 0;
-  const templateState = {};
-  let currentTemplate = '';
-  const templateFeatures = {
-    Camiseta: ['Tiro de hombre', 'Tiro de mujer', 'Desmangada'],
-    Sudadera: ['Con gorro', 'Sin gorro', 'Cremallera completa'],
-    Tarjeta: ['Acabado brillante', 'Acabado mate', 'Repujada'],
-    Lona: ['Perforada', 'Sin perforar', 'Refuerzo perimetral'],
-    Taza: ['Interior blanco', 'Interior de color', 'Taza m\u00E1gica'],
-    Gorro: ['Tipo snapback', 'Tipo trucker', 'Visera plana']
-  };
-  const templateSvgMap = {
-    Camiseta: 'assets/camiseta.svg',
-    Sudadera: 'assets/sudadera.svg',
-    Tarjeta: 'assets/tarjeta.svg',
-    Lona: 'assets/lona.svg',
-    Taza: 'assets/taza.svg',
-    Gorro: 'assets/gorra.svg'
-  };
-  const svgCache = {};
-
-  // Pegarlo al inicio de cada JS (caja.js, pedidos.js, lienzo.js)
-(async () => {
-  const me = await window.api.auth.get();
-  if (!me) { await window.api.navigate('login.html'); return; }
-
-  const pagina = location.pathname.split('/').pop();
-  const rol = me.rol;
-
-  const allow = {
-    'caja.html':    ['caja','admin'],
-    'lienzo.html':  ['caja','admin'],      // ✅ caja y admin
-    'pedidos.html': ['produccion','admin','caja']
+  const state = {
+    pedidoId: null,
+    partidaId: null,
+    partidaIndex: 0,
+    escalaPxPorCm: 37.7952755906,
+    zoom: 1,
+    themeWhite: JSON.parse(localStorage.getItem('rp:lienzo:white') || 'false'),
+    templateUrl: null,                 // ← NUEVO
+    templateNatural: { w: 0, h: 0 },   // ← NUEVO
   };
 
-  const ok = (allow[pagina] || ['admin']).includes(rol);
-  if (!ok) {
-    alert(`No tienes acceso a ${pagina}. Tu rol: ${rol}.`);
-    if (rol === 'caja') await window.api.navigate('caja.html');
-    else if (rol === 'produccion') await window.api.navigate('pedidos.html');
-    else await window.api.navigate('pedidos.html');
+  // refs
+  const artboard = $('#artboard');
+  const tplName = $('#tplName');
+  const widthInput = $('#widthInput');
+  const heightInput = $('#heightInput');
+  const bleedSel = $('#bleedSelect');
+  const colorMode = $('#colorMode');
+  const templateVisual = $('#templateVisual');
+
+  const cmToPx = (cm) => Math.max(1, Math.round(cm * state.escalaPxPorCm));
+  const pxToCm = (px) => +(px / state.escalaPxPorCm).toFixed(2);
+
+  function setArtboardSize(pxW, pxH) {
+    artboard.style.width = `${pxW}px`;
+    artboard.style.height = `${pxH}px`;
+    $('#frameLabel').textContent = `Área de impresión — ${tplName.value || 'Plantilla'}`;
   }
-})();
 
+  function assetUrl(rel) {
+    try { return new URL(rel, window.location.href).toString(); }
+    catch { return rel; }
+  }
 
-  /* --- Utilidades --- */
-  const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
-  const setSize = (w, h) => {
-    artboard.style.setProperty('--w', `${w}px`);
-    artboard.style.setProperty('--h', `${h}px`);
-    widthInput.value = w;
-    heightInput.value = h;
-    if (currentTemplate) {
-      if (!templateState[currentTemplate]) {
-        templateState[currentTemplate] = {};
-      }
-      templateState[currentTemplate].width = w;
-      templateState[currentTemplate].height = h;
-    }
-  };
-  const setZoom = (z) => {
-    zoom = clamp(z, 0.5, 2.0);
-    artboard.style.transform = `translate(-50%, -50%) scale(${zoom})`;
-    zoomLabel.textContent = `Zoom: ${Math.round(zoom * 100)}%`;
-  };
-  const updatePosLabel = (e) => {
-    const rect = artboard.getBoundingClientRect();
-    const x = Math.round(e.clientX - rect.left);
-    const y = Math.round(e.clientY - rect.top);
-    posLabel.textContent = `X: ${x}px · Y: ${y}px`;
-  };
-  const applyTemplateVisualMarkup = (name, markup) => {
-    if (!templateVisual) return;
-    if (currentTemplate !== name) return;
-    if (markup) {
-      templateVisual.innerHTML = markup;
-      templateVisual.classList.add('is-active');
-    } else {
-      templateVisual.innerHTML = '';
-      templateVisual.classList.remove('is-active');
-    }
-  };
-  const loadTemplateVisual = (name) => {
-    if (!templateVisual) return;
-    const src = templateSvgMap[name];
-    if (!src) {
-      applyTemplateVisualMarkup(name, '');
-      return;
-    }
-    const cached = svgCache[src];
-    if (cached) {
-      applyTemplateVisualMarkup(name, cached);
-      return;
-    }
-    fetch(src)
-      .then((response) => (response.ok ? response.text() : ''))
-      .then((markup) => {
-        if (markup) {
-          svgCache[src] = markup;
-          applyTemplateVisualMarkup(name, markup);
-        } else {
-          applyTemplateVisualMarkup(name, '');
-        }
-      })
-      .catch(() => applyTemplateVisualMarkup(name, ''));
-  };
-  const persistCurrentTemplateState = () => {
-    if (!currentTemplate) return;
-    if (!templateState[currentTemplate]) {
-      templateState[currentTemplate] = {};
-    }
-    templateState[currentTemplate].width = parseInt(widthInput.value || '0', 10);
-    templateState[currentTemplate].height = parseInt(heightInput.value || '0', 10);
-    if (featureSelect && featureRow && !featureRow.hidden) {
-      templateState[currentTemplate].feature = featureSelect.value;
-    }
-  };
-  const updateFeatureOptions = (templateName, preferredValue = '') => {
-    if (!featureRow || !featureSelect) return;
-    const options = templateFeatures[templateName] || [];
-    featureSelect.innerHTML = '';
-    if (!options.length) {
-      featureRow.hidden = true;
-      featureSelect.disabled = true;
-      if (!templateState[templateName]) {
-        templateState[templateName] = {};
-      }
-      templateState[templateName].feature = '';
-      return;
-    }
-    featureRow.hidden = false;
-    featureSelect.disabled = false;
-    options.forEach((label) => {
-      const option = document.createElement('option');
-      option.value = label;
-      option.textContent = label;
-      featureSelect.appendChild(option);
-    });
-    const selected = options.includes(preferredValue) ? preferredValue : options[0];
-    featureSelect.value = selected;
-    if (!templateState[templateName]) {
-      templateState[templateName] = {};
-    }
-    templateState[templateName].feature = selected;
-  };
-  const applyTemplateFromInput = (input) => {
-    if (!input) return;
-    const name = input.dataset.name || 'Lienzo';
-    const defaultWidth = parseInt(input.dataset.width || '600', 10);
-    const defaultHeight = parseInt(input.dataset.height || '400', 10);
-    if (!templateState[name]) {
-      templateState[name] = {
-        width: defaultWidth,
-        height: defaultHeight,
-        feature: ''
+  function setTemplateVisual(name) {
+    const map = {
+      'Camiseta': 'camiseta.svg',
+      'Sudadera': 'sudadera.svg',
+      'Tarjeta': 'tarjeta.svg',
+      'Lona': 'lona.svg',
+      'Taza': 'taza.svg',
+      'Gorro': 'gorra.svg',
+    };
+    const file = map[name] || 'tarjeta.svg';
+    const url = assetUrl('assets/' + file);
+
+    templateVisual.style.backgroundImage = `url('${url}')`;
+    templateVisual.style.backgroundSize = 'contain';
+    templateVisual.style.backgroundRepeat = 'no-repeat';
+    templateVisual.style.backgroundPosition = 'center';
+    templateVisual.classList.add('is-active');
+
+    // Guardamos para que composePreviewCanvas lo use
+    state.templateUrl = url;
+    preloadTemplateImage(url);
+  }
+
+  function preloadTemplateImage(url) {
+    const img = new Image();
+    img.onload = () => {
+      state.templateNatural = {
+        w: img.naturalWidth || img.width || 0,
+        h: img.naturalHeight || img.height || 0
       };
-    } else {
-      templateState[name].width = templateState[name].width || defaultWidth;
-      templateState[name].height = templateState[name].height || defaultHeight;
-    }
-    currentTemplate = name;
-    setSize(templateState[name].width, templateState[name].height);
-    artboard.dataset.template = name;
-    frameLabel.textContent = `Área de impresión — ${name}`;
-    tplNameInput.value = name;
-    updateFeatureOptions(name, templateState[name].feature);
-    loadTemplateVisual(name);
-  };
-
-  /* --- Inicial --- */
-  setZoom(1);
-  /* --- Tema --- */
-  const themeStorageKey = 'rockyprint:white-mode';
-  const readStoredTheme = () => {
-    try {
-      return window.localStorage.getItem(themeStorageKey);
-    } catch (_) {
-      return null;
-    }
-  };
-  const writeStoredTheme = (white) => {
-    try {
-      window.localStorage.setItem(themeStorageKey, white ? '1' : '0');
-    } catch (_) {
-      // almacenamiento no disponible (modo privado, etc.)
-    }
-  };
-  const applyTheme = (white) => {
-    body.classList.toggle('white-mode', white);
-    if (!btnThemeToggle) return;
-    const nextLabel = white ? 'Modo oscuro' : 'Modo blanco';
-    btnThemeToggle.textContent = nextLabel;
-    btnThemeToggle.setAttribute('aria-pressed', white ? 'true' : 'false');
-    btnThemeToggle.title = `${nextLabel} (L)`;
-  };
-  const setTheme = (white, notify = false) => {
-    applyTheme(white);
-    writeStoredTheme(white);
-    if (notify) {
-      simpleToast('Tema', white ? 'Modo blanco activado.' : 'Modo oscuro activado.');
-    }
-  };
-  const toggleTheme = (notify = false) => {
-    const next = !body.classList.contains('white-mode');
-    setTheme(next, notify);
-  };
-
-  applyTheme(readStoredTheme() === '1');
-
-  if (btnThemeToggle) {
-    btnThemeToggle.addEventListener('click', () => toggleTheme(true));
+    };
+    img.src = url;
   }
 
-  const initialTemplateRadio = templateRadios.querySelector('input[type="radio"]:checked');
-  if (initialTemplateRadio) {
-    applyTemplateFromInput(initialTemplateRadio);
+
+  function setZoom(z) {
+    state.zoom = Math.min(4, Math.max(0.2, z));
+    $('#stage').style.transform = `scale(${state.zoom})`;
+    $('#zoomLabel').textContent = `Zoom: ${Math.round(state.zoom * 100)}%`;
   }
-  if (featureSelect) {
-    featureSelect.addEventListener('change', () => {
-      if (!currentTemplate) return;
-      if (!templateState[currentTemplate]) {
-        templateState[currentTemplate] = {};
+
+  function applyTheme() {
+    document.body.classList.toggle('white-mode', state.themeWhite);
+    $('#btnThemeToggle').textContent = state.themeWhite ? 'Modo oscuro' : 'Modo blanco';
+    $('#btnThemeToggle').setAttribute('aria-pressed', String(state.themeWhite));
+    localStorage.setItem('rp:lienzo:white', JSON.stringify(state.themeWhite));
+  }
+
+  async function init() {
+    bindUI();
+    applyTheme();
+
+    const ctx = await window.api.ui.getContext();
+    state.pedidoId = Number(ctx?.pedidoId || 0) || null;
+    state.partidaId = ctx?.partidaId ? Number(ctx.partidaId) : null;
+    state.partidaIndex = Number(ctx?.partidaIndex || 0) || 0;
+
+    if (!state.pedidoId) { alert('Sin contexto de pedido.'); return; }
+
+    const data = await window.api.orders.get(state.pedidoId);
+    if (!data) { alert('No se pudo cargar el pedido.'); return; }
+
+    $('.chips .chip:nth-child(1)').innerHTML = `Pedido: <strong>#${data.pedido.folio}</strong>`;
+    $('.chips .chip:nth-child(2)').innerHTML = `Cliente: <strong>${data.cliente?.nombre || '-'}</strong>`;
+    $('.chips .chip:nth-child(3)').innerHTML = `Estado: <strong>${data.pedido.estado}</strong>`;
+
+    const part = (state.partidaId)
+      ? data.partidas.find(p => Number(p.id) === state.partidaId)
+      : data.partidas[state.partidaIndex];
+
+    if (!part) { alert('No se encontró la partida.'); return; }
+
+    const pxW = cmToPx(Number(part.ancho_cm || 10));
+    const pxH = cmToPx(Number(part.alto_cm || 10));
+    setArtboardSize(pxW, pxH);
+
+    const guessTpl = (part.producto || '').toLowerCase().includes('camiseta') ? 'Camiseta'
+      : (part.producto || '').toLowerCase().includes('sudadera') ? 'Sudadera'
+        : (part.producto || '').toLowerCase().includes('taza') ? 'Taza'
+          : (part.producto || '').toLowerCase().includes('gorro') ? 'Gorro'
+            : (part.producto || '').toLowerCase().includes('lona') ? 'Lona'
+              : 'Tarjeta';
+    tplName.value = guessTpl;
+    setTemplateVisual(guessTpl);
+
+    widthInput.value = pxW;
+    heightInput.value = pxH;
+    colorMode.value = 'CMYK';
+    bleedSel.value = '20';
+  }
+
+  /* ========= capas de LOGO (drag + resize) ========= */
+  function makeDraggableResizable(imgEl) {
+    imgEl.classList.add('logo-layer');
+    imgEl.style.position = 'absolute';
+    imgEl.style.left = '10px';
+    imgEl.style.top = '10px';
+    imgEl.style.maxWidth = '100%';
+    imgEl.style.maxHeight = '100%';
+    imgEl.style.cursor = 'move';
+    imgEl.style.userSelect = 'none';
+
+    // drag
+    let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
+    imgEl.addEventListener('mousedown', (e) => {
+      if (e.target.dataset.handle === 'resize') return;
+      dragging = true; sx = e.clientX; sy = e.clientY;
+      const r = imgEl.getBoundingClientRect();
+      const pr = artboard.getBoundingClientRect();
+      ox = (r.left - pr.left) / state.zoom;  // corregir por zoom
+      oy = (r.top - pr.top) / state.zoom;
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const dx = (e.clientX - sx) / state.zoom;
+      const dy = (e.clientY - sy) / state.zoom;
+      imgEl.style.left = Math.max(0, Math.min(artboard.clientWidth - imgEl.clientWidth, ox + dx)) + 'px';
+      imgEl.style.top = Math.max(0, Math.min(artboard.clientHeight - imgEl.clientHeight, oy + dy)) + 'px';
+    });
+    window.addEventListener('mouseup', () => dragging = false);
+
+    // handle de resize
+    const h = document.createElement('div');
+    h.dataset.handle = 'resize';
+    h.style.position = 'absolute';
+    h.style.right = '-6px';
+    h.style.bottom = '-6px';
+    h.style.width = '12px';
+    h.style.height = '12px';
+    h.style.background = 'rgba(255,255,255,.9)';
+    h.style.border = '1px solid #9fb3ff';
+    h.style.borderRadius = '4px';
+    h.style.cursor = 'se-resize';
+    imgEl.appendChild(h);
+
+    let resizing = false, sw = 0, sh = 0, rsx = 0, rsy = 0;
+    h.addEventListener('mousedown', (e) => {
+      resizing = true; rsx = e.clientX; rsy = e.clientY; sw = imgEl.clientWidth; sh = imgEl.clientHeight;
+      e.stopPropagation(); e.preventDefault();
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!resizing) return;
+      const dx = (e.clientX - rsx) / state.zoom;
+      const dy = (e.clientY - rsy) / state.zoom;
+      const nw = Math.max(24, sw + dx);
+      const nh = Math.max(24, sh + dy);
+      imgEl.style.width = nw + 'px';
+      imgEl.style.height = 'auto';
+      if (imgEl.clientHeight > artboard.clientHeight) {
+        imgEl.style.height = nh + 'px';
+        imgEl.style.width = 'auto';
       }
-      templateState[currentTemplate].feature = featureSelect.value;
     });
+    window.addEventListener('mouseup', () => resizing = false);
   }
 
+  async function openLogosModal() {
+    const backdrop = $('#logosModal');
+    const grid = $('#logosGrid');
+    backdrop.style.display = 'flex';
+    grid.innerHTML = 'Cargando…';
 
-  /* --- Plantillas (radio) --- */
-  templateRadios.addEventListener('change', (e) => {
-    const input = e.target.closest('input[type="radio"]');
-    if (!input) return;
-    persistCurrentTemplateState();
-    applyTemplateFromInput(input);
-  });
-
-  /* --- Tamaño manual --- */
-  widthInput.addEventListener('input', () => {
-    const w = clamp(parseInt(widthInput.value || '0', 10), 100, 4000);
-    setSize(w, parseInt(getComputedStyle(artboard).getPropertyValue('--h'), 10));
-  });
-  heightInput.addEventListener('input', () => {
-    const h = clamp(parseInt(heightInput.value || '0', 10), 100, 4000);
-    setSize(parseInt(getComputedStyle(artboard).getPropertyValue('--w'), 10), h);
-  });
-
-  /* --- Sangrado --- */
-  bleedSelect.addEventListener('change', () => {
-    const inset = parseInt(bleedSelect.value || '20', 10);
-    bleed.style.inset = inset ? `${inset}px` : `0px`;
-    bleed.style.display = inset === 0 ? 'none' : 'block';
-  });
-
-  /* --- Cuadrícula --- */
-  toggleGrid.addEventListener('change', () => {
-    artboard.classList.toggle('grid', toggleGrid.checked);
-  });
-
-  /* --- Guías --- */
-  const setGuidesVisibility = (visible) => {
-    artboard.querySelectorAll('.guide').forEach(g => {
-      g.style.display = visible ? 'block' : 'none';
-    });
-  };
-  toggleGuides.addEventListener('change', () => {
-    setGuidesVisibility(toggleGuides.checked);
-  });
-
-  /* --- Notas --- */
-  const dragNote = (noteEl, startEvent, { offsetX, offsetY, isNew = false, onDrop, onCancel } = {}) => {
-    const pointerId = startEvent.pointerId;
-    const artRect = artboard.getBoundingClientRect();
-    const boardWidth = artboard.clientWidth;
-    const boardHeight = artboard.clientHeight;
-    const initialRect = noteEl.getBoundingClientRect();
-    const derivedOffsetX = offsetX !== undefined ? offsetX : (startEvent.clientX - initialRect.left) / zoom;
-    const derivedOffsetY = offsetY !== undefined ? offsetY : (startEvent.clientY - initialRect.top) / zoom;
-    const maxLeft = Math.max(boardWidth - noteEl.offsetWidth, 0);
-    const maxTop = Math.max(boardHeight - noteEl.offsetHeight, 0);
-
-    const applyPosition = (clientX, clientY) => {
-      const x = (clientX - artRect.left) / zoom;
-      const y = (clientY - artRect.top) / zoom;
-      const left = clamp(x - derivedOffsetX, 0, maxLeft);
-      const top = clamp(y - derivedOffsetY, 0, maxTop);
-      noteEl.style.left = `${left}px`;
-      noteEl.style.top = `${top}px`;
-    };
-
-    const handleMove = (evt) => {
-      if (evt.pointerId !== pointerId) return;
-      applyPosition(evt.clientX, evt.clientY);
-    };
-
-    const cleanup = () => {
-      window.removeEventListener('pointermove', handleMove);
-      window.removeEventListener('pointerup', handleEnd);
-      window.removeEventListener('pointercancel', handleCancel);
-      noteEl.classList.remove('dragging');
-    };
-
-    const handleEnd = (evt) => {
-      if (evt.pointerId !== pointerId) return;
-      cleanup();
-      const inside = evt.clientX >= artRect.left && evt.clientX <= artRect.right && evt.clientY >= artRect.top && evt.clientY <= artRect.bottom;
-      if (!inside && isNew) {
-        noteEl.remove();
-        if (onCancel) onCancel();
+    try {
+      const logos = await window.api.media.list({ tag: 'logo' });
+      grid.innerHTML = '';
+      if (!logos.length) {
+        grid.innerHTML = '<div class="muted">No hay logos guardados.</div>';
         return;
       }
-      noteEl.style.pointerEvents = 'auto';
-      if (onDrop) onDrop();
-    };
-
-    const handleCancel = (evt) => {
-      if (evt.pointerId !== pointerId) return;
-      cleanup();
-      if (isNew) {
-        noteEl.remove();
-      } else {
-        noteEl.style.pointerEvents = 'auto';
-      }
-      if (onCancel) onCancel();
-    };
-
-    noteEl.classList.add('dragging');
-    noteEl.style.pointerEvents = 'none';
-    applyPosition(startEvent.clientX, startEvent.clientY);
-    window.addEventListener('pointermove', handleMove);
-    window.addEventListener('pointerup', handleEnd);
-    window.addEventListener('pointercancel', handleCancel);
-  };
-
-  const decorateCanvasNote = (noteEl) => {
-    if (!noteEl) return;
-    noteEl.classList.add('canvas-note');
-    if (noteEl.dataset.canvasDecorated === '1') return;
-    noteEl.dataset.canvasDecorated = '1';
-    noteEl.style.position = 'absolute';
-    noteEl.style.touchAction = 'none';
-    if (!noteEl.style.width) {
-      noteEl.style.width = `${noteEl.offsetWidth}px`;
-    }
-    if (!noteEl.style.height) {
-      noteEl.style.height = `${noteEl.offsetHeight}px`;
-    }
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'note-remove';
-    removeBtn.setAttribute('aria-label', 'Eliminar nota');
-    removeBtn.textContent = '×';
-    removeBtn.addEventListener('pointerdown', (evt) => {
-      evt.stopPropagation();
-      evt.preventDefault();
-    });
-    removeBtn.addEventListener('click', (evt) => {
-      evt.stopPropagation();
-      noteEl.remove();
-    });
-    const resizeHandle = document.createElement('div');
-    resizeHandle.className = 'note-resize';
-    resizeHandle.innerHTML = '&#x2198;';
-    noteEl.appendChild(removeBtn);
-    noteEl.appendChild(resizeHandle);
-    resizeHandle.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (resizeHandle.setPointerCapture) {
-        try {
-          resizeHandle.setPointerCapture(event.pointerId);
-        } catch (_) {}
-      }
-      const startX = event.clientX;
-      const startY = event.clientY;
-      const startWidth = noteEl.offsetWidth;
-      const startHeight = noteEl.offsetHeight;
-      const left = parseFloat(noteEl.style.left || '0');
-      const top = parseFloat(noteEl.style.top || '0');
-      const boardWidth = artboard.clientWidth;
-      const boardHeight = artboard.clientHeight;
-      const minWidth = 140;
-      const minHeight = 90;
-      const maxWidth = Math.max(minWidth, boardWidth - left);
-      const maxHeight = Math.max(minHeight, boardHeight - top);
-      noteEl.classList.add('resizing');
-      const handleResizeMove = (moveEvt) => {
-        const deltaX = (moveEvt.clientX - startX) / zoom;
-        const deltaY = (moveEvt.clientY - startY) / zoom;
-        const nextWidth = clamp(startWidth + deltaX, minWidth, maxWidth);
-        const nextHeight = clamp(startHeight + deltaY, minHeight, maxHeight);
-        noteEl.style.width = `${nextWidth}px`;
-        noteEl.style.height = `${nextHeight}px`;
-      };
-      const finishResize = () => {
-        window.removeEventListener('pointermove', handleResizeMove);
-        window.removeEventListener('pointerup', handlePointerUp);
-        window.removeEventListener('pointercancel', handlePointerCancel);
-        noteEl.classList.remove('resizing');
-        if (resizeHandle.releasePointerCapture) {
-          try {
-            resizeHandle.releasePointerCapture(event.pointerId);
-          } catch (_) {}
-        }
-      };
-      const handlePointerUp = (evt) => {
-        if (evt.pointerId !== event.pointerId) return;
-        finishResize();
-      };
-      const handlePointerCancel = (evt) => {
-        if (evt.pointerId !== event.pointerId) return;
-        finishResize();
-      };
-      window.addEventListener('pointermove', handleResizeMove);
-      window.addEventListener('pointerup', handlePointerUp);
-      window.addEventListener('pointercancel', handlePointerCancel);
-    });
-  };
-
-  const enableCanvasNoteDrag = (noteEl) => {
-    if (!noteEl || noteEl.dataset.canvasDrag === '1') return;
-    decorateCanvasNote(noteEl);
-    noteEl.dataset.canvasDrag = '1';
-    noteEl.style.cursor = 'grab';
-    noteEl.style.touchAction = 'none';
-    noteEl.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      dragNote(noteEl, event);
-    });
-  };
-
-  const enableLibraryNoteDrag = (noteEl) => {
-    if (!noteEl || noteEl.dataset.libraryDrag === '1') return;
-    noteEl.dataset.libraryDrag = '1';
-    noteEl.style.cursor = 'grab';
-    noteEl.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      const sourceRect = noteEl.getBoundingClientRect();
-      const floating = noteEl.cloneNode(true);
-      artboard.appendChild(floating);
-      decorateCanvasNote(floating);
-      floating.style.left = '0px';
-      floating.style.top = '0px';
-      floating.style.width = `${sourceRect.width / zoom}px`;
-      floating.style.height = `${sourceRect.height / zoom}px`;
-      floating.style.pointerEvents = 'none';
-
-      dragNote(floating, event, {
-        offsetX: (event.clientX - sourceRect.left) / zoom,
-        offsetY: (event.clientY - sourceRect.top) / zoom,
-        isNew: true,
-        onDrop: () => {
-          floating.style.pointerEvents = 'auto';
-          enableCanvasNoteDrag(floating);
-        },
-        onCancel: () => {
-          floating.remove();
-        }
+      logos.forEach(l => {
+        const card = document.createElement('div');
+        card.className = 'thumb-card';
+        card.innerHTML = `
+          <img src="${l.dataUrl}" alt="${l.filename}">
+          <div class="meta">${l.filename}</div>
+        `;
+        card.addEventListener('click', () => {
+          const img = document.createElement('img');
+          img.src = l.dataUrl; // data URL
+          img.alt = l.filename;
+          makeDraggableResizable(img);
+          artboard.appendChild(img);
+          closeLogosModal();
+        });
+        grid.appendChild(card);
       });
+    } catch {
+      grid.innerHTML = '<div class="muted">No se pudieron cargar los logos.</div>';
+    }
+  }
+  function closeLogosModal() { $('#logosModal').style.display = 'none'; }
+
+  async function uploadLogoFromFileInput() {
+    const inp = $('#logoFile');
+    const f = inp.files?.[0];
+    if (!f) return;
+    const b64 = await fileToBase64(f);
+    const img = await getImageSize(b64);
+    const payload = {
+      filename: f.name,
+      mime: f.type || 'image/png',
+      width: img.width,
+      height: img.height,
+      tags: ['logo'],
+      base64: b64
+    };
+    const res = await window.api.media.upload(payload);
+    if (res?.ok) await openLogosModal();
+    else alert('No se pudo subir el logo.');
+  }
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = reject;
+      r.readAsDataURL(file);
     });
-  };
-
-  notesList.querySelectorAll('.note').forEach(enableLibraryNoteDrag);
-
-  const addNote = (text) => {
-    noteCounter += 1;
-    const article = document.createElement('article');
-    article.className = 'note';
-    article.innerHTML = `
-      <div class="corner">#${noteCounter}</div>
-      <div class="tag">Nota</div>
-      <p></p>
-    `;
-    article.querySelector('p').textContent = text;
-    notesList.appendChild(article);
-    notesList.scrollTop = notesList.scrollHeight;
-    enableLibraryNoteDrag(article);
-  };
-
-  btnAddNote.addEventListener('click', () => {
-    const txt = (newNoteText.value || '').trim();
-    if (!txt) return;
-    addNote(txt);
-    newNoteText.value = '';
-  });
-
-  btnClearNotes.addEventListener('click', () => {
-    notesList.innerHTML = '';
-    noteCounter = 0;
-    artboard.querySelectorAll('.canvas-note').forEach(n => n.remove());
-  });
-
-  /* --- Zoom --- */
-  zoomIn.addEventListener('click', () => setZoom(zoom + 0.1));
-  zoomOut.addEventListener('click', () => setZoom(zoom - 0.1));
-  zoomReset.addEventListener('click', () => setZoom(1));
-
-  // Ctrl + rueda del mouse para zoom
-  stage.addEventListener('wheel', (e) => {
-    if (e.ctrlKey) {
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      setZoom(zoom + delta);
-    }
-  }, { passive: false });
-
-  // Atajos básicos
-  document.addEventListener('keydown', (e) => {
-    // Ctrl+S Guardar (prevent default)
-    if (e.ctrlKey && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      // Aquí puedes disparar tu flujo de guardado
-      simpleToast('Guardado', 'Se guardó el proyecto (demo).');
-    }
-    // N → nueva nota
-    if (!e.ctrlKey && e.key.toLowerCase() === 'n') {
-      newNoteText.focus();
-    }
-    // +/- zoom
-    if (e.key === '+' || e.key === '=') setZoom(zoom + 0.1);
-    if (e.key === '-') setZoom(zoom - 0.1);
-    // L -> alternar tema
-    if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'l') {
-      const target = e.target;
-      const isField = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
-      if (!isField) toggleTheme(true);
-    }
-    // G → alternar cuadrícula
-    if (!e.ctrlKey && e.key.toLowerCase() === 'g') {
-      toggleGrid.checked = !toggleGrid.checked;
-      toggleGrid.dispatchEvent(new Event('change'));
-    }
-    // H → alternar guías
-    if (!e.ctrlKey && e.key.toLowerCase() === 'h') {
-      toggleGuides.checked = !toggleGuides.checked;
-      toggleGuides.dispatchEvent(new Event('change'));
-    }
-    // 0 → reset zoom
-    if (e.key === '0') setZoom(1);
-  });
-
-  // Cursor pos sobre artboard
-  artboard.addEventListener('mousemove', updatePosLabel);
-  artboard.addEventListener('mouseleave', () => posLabel.textContent = 'X: 0px · Y: 0px');
-
-  /* --- Tool selection visual (mock) --- */
-  document.querySelectorAll('.tool').forEach(t => {
-    t.addEventListener('click', () => {
-      document.querySelectorAll('.tool').forEach(x => x.classList.remove('active'));
-      t.classList.add('active');
-      // Aquí podrías activar el modo herramienta real
-      simpleToast('Herramienta', `Seleccionada: ${t.dataset.tool}`);
+  }
+  function getImageSize(dataUrl) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.width, height: img.height });
+      img.src = dataUrl;
     });
-  });
+  }
 
-  /* --- Botones topbar (mock) --- */
-  document.getElementById('btnPreview').addEventListener('click', () => {
-    simpleToast('Vista previa', 'Entrando a vista previa (demo).');
-  });
-  document.getElementById('btnShortcuts').addEventListener('click', () => {
-    alert(`Atajos rápidos:
-- Ctrl+S: Guardar
-- + / - : Zoom
-- 0     : Zoom 100%
-- G     : Alternar cuadrícula
-- H     : Alternar guías
-- L     : Alternar tema
-- N     : Enfocar nueva nota`);
-  });
+  /* ========= Guardar Preview ========= */
+  async function composePreviewCanvas() {
+    const w = artboard.clientWidth;
+    const h = artboard.clientHeight;
 
-  /* --- Mini toast simple (sin librerías) --- */
-  function simpleToast(title, text){
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+
+    // 1) Fondo blanco
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+
+    // 2) DIBUJAR TEMPLATE (de fondo) – usando "contain" y centrado
+    const tplUrl = getTemplateUrl();
+    if (tplUrl) {
+      await new Promise((resolve) => {
+        const im = new Image();
+        im.onload = () => {
+          const tw = im.naturalWidth || im.width || 1;
+          const th = im.naturalHeight || im.height || 1;
+          const s = Math.min(w / tw, h / th);   // contain
+          const dw = Math.round(tw * s);
+          const dh = Math.round(th * s);
+          const dx = Math.round((w - dw) / 2);
+          const dy = Math.round((h - dh) / 2);
+          ctx.drawImage(im, dx, dy, dw, dh);
+          resolve();
+        };
+        // Para file:///SVG/PNG en Electron no hace falta CORS, pero no estorba:
+        im.crossOrigin = 'anonymous';
+        im.src = tplUrl;
+      });
+    }
+
+    // 3) LOGOS / capas de arte en su posición actual
+    const layers = $$('.logo-layer', artboard);
+    for (const node of layers) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => {
+        const im = new Image();
+        im.onload = () => {
+          const rect = node.getBoundingClientRect();
+          const pr = artboard.getBoundingClientRect();
+          const x = rect.left - pr.left;
+          const y = rect.top - pr.top;
+          const iw = node.clientWidth;
+          const ih = node.clientHeight;
+          ctx.drawImage(im, x, y, iw, ih);
+          resolve();
+        };
+        im.crossOrigin = 'anonymous';
+        im.src = node.src;
+      });
+    }
+
+    // 4) PNG final
+    return canvas.toDataURL('image/png');
+  }
+
+
+  async function saveDesign() {
+    try {
+      // 1) actualizar ancho/alto (cm) y, si aplica, el producto con la plantilla
+      const cmW = pxToCm(Number(widthInput.value || 0));
+      const cmH = pxToCm(Number(heightInput.value || 0));
+
+      const data = await window.api.orders.get(state.pedidoId);
+      const part = (state.partidaId)
+        ? data.partidas.find(p => Number(p.id) === state.partidaId)
+        : data.partidas[state.partidaIndex];
+      if (!part) { alert('No se encontró la partida a guardar.'); return; }
+
+      const cantidad = Number(part.cantidad || 1);
+      const pu = Number(part.precio_unitario || 0);
+      const subtotal = +(cantidad * pu).toFixed(2);
+
+      const updateData = {
+        ancho_cm: cmW,
+        alto_cm: cmH,
+        subtotal
+      };
+
+      // ← Aquí escribimos la plantilla en el campo "producto"
+      // Solo si estaba vacío (para no sobreescribir manuales)
+      const chosenTpl = (tplName.value || '').trim();
+      if (chosenTpl && (!part.producto || String(part.producto).trim() === '')) {
+        updateData.producto = chosenTpl;
+      }
+
+      const upd = await window.api.orders.updatePartida(Number(part.id), updateData);
+      if (!upd?.ok) { alert('No se pudo actualizar la partida.'); return; }
+      await window.api.orders.recalcTotals(state.pedidoId);
+
+      // 2) generar PNG del arte
+      const dataUrl = await composePreviewCanvas();
+
+      // 3) subir a medios como preview
+      const up = await window.api.media.upload({
+        filename: `preview-${state.pedidoId}-${part.id}.png`,
+        mime: 'image/png',
+        width: Number(widthInput.value || 0),
+        height: Number(heightInput.value || 0),
+        tags: ['preview'],
+        base64: dataUrl,
+        origin: 'preview'
+      });
+      if (!up?.ok || !up.id) { alert('No se pudo subir el preview.'); return; }
+
+      // 4) enlazar en disenos
+      await window.api.design.savePreview({
+        pedidoId: state.pedidoId,
+        partidaId: Number(part.id),
+        medioId: Number(up.id),
+        nombrePlantilla: tplName.value,
+        lienzoAnchoPx: Number(widthInput.value || 0),
+        lienzoAltoPx: Number(heightInput.value || 0),
+        modoColor: colorMode.value,
+        sangradoPx: Number(bleedSel.value || 0)
+      });
+
+      // 5) migaja para Caja (muestra preview al regresar)
+      localStorage.setItem('rp:preview', JSON.stringify({
+        pedidoId: state.pedidoId,
+        partidaIndex: state.partidaIndex,
+        dataUrl
+      }));
+
+      toast('Guardado', 'Preview generado y enlazado.');
+      // Regresar a caja con el contexto del pedido
+      await window.api.navigate('caja.html', { pedidoId: String(state.pedidoId) });
+    } catch (err) {
+      console.error('[lienzo] saveDesign error', err);
+      alert('No se pudo guardar el diseño.');
+    }
+  }
+
+  /* ========= UI ========= */
+  function showShortcuts() {
+    alert(`Atajos:
+- Ctrl+S: Guardar preview
+- L: Alternar modo claro/oscuro
+- H: Ayuda
+- +/-: Zoom, 100%: reset`);
+  }
+
+  function toast(title, text) {
     const box = document.createElement('div');
-    const styles = getComputedStyle(body);
-    const toastBg = styles.getPropertyValue('--toast-bg').trim() || '#1c2540';
-    const toastBorder = styles.getPropertyValue('--toast-border').trim() || '#2f3b5e';
-    const toastColor = styles.getPropertyValue('--toast-text').trim() || '#dfe7ff';
-    const shadow = styles.getPropertyValue('--shadow').trim() || '0 8px 20px rgba(0,0,0,.35)';
     box.style.cssText = `
       position: fixed; right: 16px; top: 16px; z-index: 9999;
-      background: ${toastBg}; border:1px solid ${toastBorder}; color:${toastColor};
-      padding:10px 12px; border-radius:10px; box-shadow: ${shadow};
-      font: 13px/1.3 Inter, system-ui;
-    `;
+      background: #0f172a; border:1px solid #1f2a44; color:#dbeafe;
+      padding:10px 12px; border-radius:10px; box-shadow: 0 8px 20px rgba(0,0,0,.25);
+      font: 13px/1.3 system-ui, Segoe UI, Roboto;`;
     box.innerHTML = `<strong style="display:block;margin-bottom:4px">${title}</strong><span>${text}</span>`;
     document.body.appendChild(box);
-    setTimeout(() => box.remove(), 1800);
+    setTimeout(() => box.remove(), 1600);
   }
-});
+
+  function bindUI() {
+    // Plantillas (selección por radios)
+    $('#templateRadios')?.addEventListener('change', (e) => {
+      const r = e.target.closest('input[type=radio][name=tpl]');
+      if (!r) return;
+      const w = Number(r.dataset.width || 600);
+      const h = Number(r.dataset.height || 400);
+      tplName.value = String(r.dataset.name || 'Plantilla');
+      setTemplateVisual(tplName.value);
+      setArtboardSize(w, h);
+      widthInput.value = w;
+      heightInput.value = h;
+    });
+
+    widthInput.addEventListener('input', () => setArtboardSize(Number(widthInput.value || 1), Number(heightInput.value || 1)));
+    // (fix) alto debe usar (width,height) en ese orden
+    heightInput.addEventListener('input', () => setArtboardSize(Number(widthInput.value || 1), Number(heightInput.value || 1)));
+
+    $('#toggleGrid').addEventListener('change', (e) => artboard.classList.toggle('grid', !!e.target.checked));
+    $('#toggleGuides').addEventListener('change', (e) => {
+      $$('.guide').forEach(g => g.style.display = e.target.checked ? '' : 'none');
+    });
+
+    $('#zoomIn').addEventListener('click', () => setZoom(state.zoom + 0.1));
+    $('#zoomOut').addEventListener('click', () => setZoom(state.zoom - 0.1));
+    $('#zoomReset').addEventListener('click', () => setZoom(1));
+
+    $('#btnThemeToggle').addEventListener('click', () => { state.themeWhite = !state.themeWhite; applyTheme(); });
+
+    $('#btnShortcuts').addEventListener('click', showShortcuts);
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key.toLowerCase() === 's') { e.preventDefault(); saveDesign(); }
+      if (e.key.toLowerCase() === 'l') { e.preventDefault(); state.themeWhite = !state.themeWhite; applyTheme(); }
+      if (e.key.toLowerCase() === 'h') { e.preventDefault(); showShortcuts(); }
+    });
+
+    $('#btnSave').addEventListener('click', saveDesign);
+
+    // Modal logos
+    $('#btnLogos').addEventListener('click', openLogosModal);
+    $('#btnCloseLogos').addEventListener('click', closeLogosModal);
+    $('#btnUploadLogo').addEventListener('click', uploadLogoFromFileInput);
+  }
+  function extractBgUrl(el) {
+    const bg = getComputedStyle(el).backgroundImage || '';
+    // formatos posibles: url("file:///..."), url(file:///...), none
+    const m = bg.match(/url\((?:'|")?(.*?)(?:'|")?\)/i);
+    return m ? m[1] : null;
+  }
+
+  function getTemplateUrl() {
+    // preferimos la guardada; si no, leemos del CSS por si algo la borró
+    return state.templateUrl || extractBgUrl(templateVisual) || null;
+  }
+
+  setZoom(1);
+  init();
+})();

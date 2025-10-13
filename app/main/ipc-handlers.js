@@ -3,56 +3,64 @@ import { ipcMain, BrowserWindow } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Store from 'electron-store';
+import crypto from 'node:crypto';
 import { query } from './db.js';
 
-// ---------------------------
-// Util: rutas para navegar
-// ---------------------------
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererPath = (html) => path.join(__dirname, '../renderer', html);
 
-// ---------------------------
-// Store de sesión y contexto UI
-// ---------------------------
-const store = new Store({ name: 'session' }); // guarda { user } y opcionalmente 'ui:ctx'
+const store = new Store({ name: 'session' });
 
-// ===========================
-// AUTH
-// ===========================
+/* ========= Helpers ========= */
+function ensureDataUrl(row) {
+  // Preferencia: dataUrl ya armado
+  if (row?.dataUrl && /^data:/.test(row.dataUrl)) return row.dataUrl;
+
+  // Con tu esquema: tipo_mime + base64 (alias "b64") o Buffer "datos"
+  if (row?.tipo_mime && row?.b64) return `data:${row.tipo_mime};base64,${row.b64}`;
+  if (row?.tipo_mime && row?.datos && Buffer.isBuffer(row.datos)) {
+    return `data:${row.tipo_mime};base64,${row.datos.toString('base64')}`;
+  }
+
+  // Compatibilidad con otros nombres por si en el futuro existe
+  if (row?.mime && row?.data && !/^data:/.test(row.data)) {
+    return `data:${row.mime};base64,${row.data}`;
+  }
+  if (row?.mime_tipo && row?.data_base64) {
+    return `data:${row.mime_tipo};base64,${row.data_base64}`;
+  }
+  return row?.data_base64 || row?.dataUrl || row?.data || '';
+}
+
+function sha256Base64(dataUrlOrBase64) {
+  const base64 = String(dataUrlOrBase64 || '').replace(/^data:[^,]+,/, '');
+  return crypto.createHash('sha256').update(base64, 'base64').digest('hex');
+}
+
+/* ===================== AUTH ===================== */
 ipcMain.handle('auth:login', async (_evt, { usuario, clave }) => {
   try {
     const res = await query('SELECT * FROM verificar_login($1,$2)', [usuario, clave]);
     const row = res.rows?.[0];
     if (!row) return { ok: false, error: 'Usuario o contraseña incorrectos' };
-
-    const user = {
-      id: row.id, usuario: row.usuario, nombre: row.nombre,
-      email: row.email, rol: row.rol
-    };
+    const user = { id: row.id, usuario: row.usuario, nombre: row.nombre, email: row.email, rol: row.rol };
     store.set('user', user);
     return { ok: true, user };
-  } catch (e) {
+  } catch {
     return { ok: false, error: 'Error de autenticación' };
   }
 });
-
 ipcMain.handle('auth:get', async () => store.get('user') || null);
 ipcMain.handle('auth:logout', async () => { store.delete('user'); store.delete('ui:ctx'); return true; });
 
-// ===========================================
-// UI: navegar entre HTMLs + contexto opcional
-// - window.api.navigate('lienzo.html')
-// - window.api.navigate({ html:'lienzo.html', ctx:{...} })
-// ===========================================
+/* ===================== UI / NAV ===================== */
 ipcMain.handle('ui:navigate', async (_evt, htmlOrObj, ctxArg) => {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
   if (!win) return { ok: false, error: 'No hay ventana activa' };
 
-  const payload = (typeof htmlOrObj === 'string')
-    ? { html: htmlOrObj, ctx: ctxArg }
-    : (htmlOrObj || {});
-
+  const payload = (typeof htmlOrObj === 'string') ? { html: htmlOrObj, ctx: ctxArg } : (htmlOrObj || {});
   const requested = path.basename(String(payload.html || '').trim()) || 'caja.html';
+
   const allowedFiles = new Set(['login.html', 'caja.html', 'lienzo.html', 'pedidos.html']);
   if (!allowedFiles.has(requested)) return { ok: false, error: 'Archivo no permitido' };
 
@@ -66,45 +74,34 @@ ipcMain.handle('ui:navigate', async (_evt, htmlOrObj, ctxArg) => {
       produccion: new Set(['pedidos.html']),
       admin: new Set(['caja.html', 'lienzo.html', 'pedidos.html'])
     };
-    const defaultByRole = { caja: 'caja.html', produccion: 'pedidos.html', admin: 'pedidos.html' };
+    const defByRole = { caja: 'caja.html', produccion: 'pedidos.html', admin: 'pedidos.html' };
 
-    const allowed = allowedByRole[rol] || new Set();
-    const target = allowed.has(requested) ? requested : (defaultByRole[rol] || 'caja.html');
+    const target = (allowedByRole[rol]?.has(requested)) ? requested : (defByRole[rol] || 'caja.html');
 
     if (payload.ctx) store.set('ui:ctx', payload.ctx);
+
     try { await win.loadFile(rendererPath(target)); return { ok: true }; }
-    catch (err) { console.error('navigate error', err); return { ok: false, error: String(err) }; }
+    catch (err) { return { ok: false, error: String(err) }; }
   } else {
     store.delete('ui:ctx');
     try { await win.loadFile(rendererPath('login.html')); return { ok: true }; }
-    catch (err) { console.error('navigate error', err); return { ok: false, error: String(err) }; }
+    catch (err) { return { ok: false, error: String(err) }; }
   }
 });
-
-// Contexto UI directo
 ipcMain.handle('ui:setContext', (_e, ctx) => { store.set('ui:ctx', ctx || {}); return { ok: true }; });
 ipcMain.handle('ui:getContext', () => store.get('ui:ctx') || null);
 ipcMain.handle('ui:clearContext', () => { store.delete('ui:ctx'); return { ok: true }; });
 
-// ===================================================
-//  Pedidos / Clientes  (tablas en español)
-//  - clientes(nombre, telefono, correo, rfc, facturar, canal, ...)
-//  - pedidos( ... fecha_entrega, hora_entrega, total, anticipo, ... )
-//  - partidas( ... )
-// ===================================================
-
-// Helpers
+/* ===================== HELPERS ORDERS ===================== */
 function calcularTotal(partidas = []) {
   return partidas.reduce((acc, it) => {
-    const pu = Number(it.precio_unitario ?? it.unit_price ?? it.pu ?? 0);
-    const qty = Number(it.cantidad ?? it.quantity ?? it.cant ?? 0);
+    const pu = Number(it.precio_unitario ?? it.pu ?? 0);
+    const qty = Number(it.cantidad ?? it.cant ?? 0);
     return acc + (pu * qty);
   }, 0);
 }
 
-// ---- Upsert de cliente (FIX: castear params para evitar "could not determine data type") ----
 async function asegurarCliente({ nombre, telefono, correo, rfc, factura, canal }) {
-  // Busca por correo si viene; si no, por nombre. Se castea $1/$2 a text.
   const sqlFind = `
     SELECT id
     FROM clientes
@@ -137,14 +134,11 @@ async function asegurarCliente({ nombre, telefono, correo, rfc, factura, canal }
   return ins.rows[0].id;
 }
 
-
-// Normaliza payload (front puede mandar español/inglés)
 function normalizarPedidoPayload(payload) {
   const c = payload.cliente || payload.client || {};
   const cliente = {
     nombre: c.nombre || c.name || '',
     telefono: c.tel || c.phone || null,
-    // 👇 IMPORTANTE: usar 'correo' para tu tabla
     correo: c.correo || c.email || null,
     rfc: c.rfc || null,
     factura: (c.factura === 'si' || c.factura === true || c.invoice_flag === true),
@@ -153,47 +147,35 @@ function normalizarPedidoPayload(payload) {
 
   const items = (payload.items || []).map((it) => ({
     producto: it.producto || it.product || '',
-    descripcion: it.desc || it.descr || it.descripcion || '',
-    ancho_cm: Number(it.ancho ?? it.width_cm ?? 0),
-    alto_cm: Number(it.alto ?? it.height_cm ?? 0),
-    cantidad: Number(it.cant ?? it.quantity ?? 1),
-    info_color: it.color || it.color_info || '',
-    acabados: it.acabados || it.finishes || '',
-    precio_unitario: Number(it.pu ?? it.unit_price ?? 0),
+    descripcion: it.desc || it.descripcion || '',
+    ancho_cm: Number(it.ancho ?? 0),
+    alto_cm: Number(it.alto ?? 0),
+    cantidad: Number(it.cant ?? 1),
+    info_color: it.color || '',
+    acabados: it.acabados || '',
+    precio_unitario: Number(it.pu ?? 0),
   }));
 
   return {
     folio: payload.folio,
-    estado: payload.estado || payload.state || 'Pendiente',
-    sucursal_usuario: payload.sucursal || payload.branch_user || null,
-    prioridad: payload.prioridad || payload.priority || 'Normal',
-
-    // 👇 Tu tabla usa fecha_entrega y hora_entrega
-    fecha_entrega: payload.entregaFecha || payload.delivery_date || null,
-    hora_entrega: payload.entregaHora || payload.delivery_time || null,
-
-    // totales (tu tabla usa total y anticipo)
-    anticipo: Number(payload.anticipo ?? payload.deposit_amount ?? 0),
-    metodo_pago: payload.metodo_pago || payload.payment_method || 'Efectivo',
-
+    estado: payload.estado || 'Pendiente',
+    sucursal_usuario: payload.sucursal || null,
+    prioridad: payload.prioridad || 'Normal',
+    fecha_entrega: payload.entregaFecha || null,
+    hora_entrega: payload.entregaHora || null,
+    anticipo: Number(payload.anticipo ?? 0),
+    metodo_pago: payload.metodo_pago || 'Efectivo',
     cliente, items
   };
 }
 
-// ---------------------------
-// Crear pedido (usa nombres reales de tu tabla)
-// ---------------------------
+/* ===================== ORDERS ===================== */
 ipcMain.handle('orders:create', async (_evt, payloadRaw) => {
   try {
     const p = normalizarPedidoPayload(payloadRaw);
-
-    // Cliente
     const clienteId = await asegurarCliente(p.cliente);
-
-    // Total calculado server-side (campo 'total' en tu tabla)
     const total = calcularTotal(p.items);
 
-    // INSERT con columnas reales
     const ins = await query(
       `INSERT INTO pedidos
         (folio, cliente_id, estado, sucursal_usuario, prioridad,
@@ -208,15 +190,14 @@ ipcMain.handle('orders:create', async (_evt, payloadRaw) => {
     );
     const pedidoId = ins.rows[0].id;
 
-    // Partidas
     if (p.items.length) {
       const values = [];
       const params = [];
       p.items.forEach((it, i) => {
         const idx = i * 10;
         values.push(
-          `($${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5},
-             $${idx + 6}, $${idx + 7}, $${idx + 8}, $${idx + 9}, $${idx + 10})`
+          `($${idx + 1},$${idx + 2},$${idx + 3},$${idx + 4},$${idx + 5},
+            $${idx + 6},$${idx + 7},$${idx + 8},$${idx + 9},$${idx + 10})`
         );
         params.push(
           pedidoId,
@@ -248,14 +229,11 @@ ipcMain.handle('orders:create', async (_evt, payloadRaw) => {
   }
 });
 
-// ---------------------------
-// Listar pedidos (usa fecha_entrega y total)
-// ---------------------------
 ipcMain.handle('orders:list', async (_evt, filtros = {}) => {
-  const q = filtros.q ?? filtros.query ?? null;
-  const estado = filtros.estado ?? filtros.state ?? null;
-  const desde = filtros.desde ?? filtros.from ?? null;
-  const hasta = filtros.hasta ?? filtros.to ?? null;
+  const q = filtros.q ?? null;
+  const estado = filtros.estado ?? null;
+  const desde = filtros.desde ?? null;
+  const hasta = filtros.hasta ?? null;
 
   const clauses = [];
   const params = [];
@@ -269,9 +247,8 @@ ipcMain.handle('orders:list', async (_evt, filtros = {}) => {
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
   const sql = `
-    SELECT
-      p.id, p.folio, c.nombre AS cliente, p.estado,
-      p.fecha_entrega, p.actualizado_en, p.total
+    SELECT p.id, p.folio, c.nombre AS cliente, p.estado,
+           p.fecha_entrega, p.actualizado_en, p.total
     FROM pedidos p
     LEFT JOIN clientes c ON c.id = p.cliente_id
     ${where}
@@ -282,9 +259,6 @@ ipcMain.handle('orders:list', async (_evt, filtros = {}) => {
   return rows;
 });
 
-// ---------------------------
-// Obtener pedido completo
-// ---------------------------
 ipcMain.handle('orders:get', async (_evt, id) => {
   const po = await query(`SELECT * FROM pedidos WHERE id=$1`, [id]);
   const pedido = po.rows?.[0];
@@ -296,4 +270,195 @@ ipcMain.handle('orders:get', async (_evt, id) => {
     : null;
 
   return { pedido, partidas: it.rows, cliente };
+});
+
+ipcMain.handle('orders:updatePartida', async (_evt, { partidaId, data }) => {
+  const fields = [];
+  const params = [];
+  let p = 1;
+
+  const allow = {
+    producto: 'text',
+    descripcion: 'text',
+    ancho_cm: 'numeric',
+    alto_cm: 'numeric',
+    cantidad: 'int',
+    info_color: 'text',
+    acabados: 'text',
+    precio_unitario: 'numeric',
+    subtotal: 'numeric',
+  };
+
+  for (const k of Object.keys(data || {})) {
+    if (!(k in allow)) continue;
+    fields.push(`${k} = $${p++}`);
+    params.push(data[k]);
+  }
+  if (!fields.length) return { ok: false, error: 'Sin cambios' };
+
+  params.push(partidaId);
+  const sql = `UPDATE partidas SET ${fields.join(', ')} WHERE id = $${p} RETURNING pedido_id`;
+  const res = await query(sql, params);
+  const pedidoId = res.rows?.[0]?.pedido_id || null;
+  return { ok: true, pedidoId };
+});
+
+ipcMain.handle('orders:recalcTotals', async (_evt, pedidoId) => {
+  const it = await query(`SELECT subtotal FROM partidas WHERE pedido_id=$1`, [pedidoId]);
+  const total = it.rows.reduce((s, r) => s + Number(r.subtotal || 0), 0);
+  await query(`UPDATE pedidos SET total=$2, actualizado_en=NOW() WHERE id=$1`, [pedidoId, total]);
+  return { ok: true, total };
+});
+
+/* ===================== MEDIA (logos / previews) ===================== */
+/* Adaptado a tu esquema: tipo_mime, datos bytea, creado_en; sin 'tags' */
+ipcMain.handle('media:list', async (_evt, filter = {}) => {
+  const tag = filter.tag || null; // usamos 'origen' como canal (p.ej. 'logo' o 'preview')
+
+  let sql = `
+    SELECT id,
+           nombre_archivo,
+           tipo_mime,
+           ancho_px, alto_px,
+           encode(datos, 'base64') AS b64,
+           huella_sha256, origen,
+           creado_en
+    FROM medios
+  `;
+  const params = [];
+  if (tag) {
+    sql += ` WHERE origen = $1`;
+    params.push(tag);
+  }
+  sql += ` ORDER BY creado_en DESC LIMIT 500`;
+
+  const { rows } = await query(sql, params);
+  return rows.map(r => ({
+    id: r.id,
+    filename: r.nombre_archivo,
+    mime: r.tipo_mime,
+    width: r.ancho_px,
+    height: r.alto_px,
+    dataUrl: `data:${r.tipo_mime};base64,${r.b64}`,
+    sha256: r.huella_sha256,
+    origin: r.origen,
+    tags: [],                // no existe columna tags en tu tabla
+    created_at: r.creado_en
+  }));
+});
+
+ipcMain.handle('media:upload', async (_evt, payload) => {
+  const filename = payload.filename || 'archivo';
+  const mime     = payload.mime || 'image/png';
+  const w        = Number(payload.width || 0);
+  const h        = Number(payload.height || 0);
+  const tags     = Array.isArray(payload.tags) ? payload.tags : [];
+  const dataUrlOrBase64 = String(payload.base64 || '');
+  const origin   = payload.origin || (tags.includes('logo') ? 'logo' : (tags.includes('preview') ? 'preview' : 'uploader'));
+
+  if (!dataUrlOrBase64) return { ok: false, error: 'Imagen vacía' };
+
+  const sha = sha256Base64(dataUrlOrBase64);
+  const base64 = dataUrlOrBase64.replace(/^data:[^,]+,/, '');
+  const ext = (filename.split('.').pop() || '').toLowerCase() || null;
+
+  // tamaño en bytes aproximado
+  const bytes = Math.max(0,
+    Math.floor(base64.length * 3 / 4) - (base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0)
+  );
+
+  const sql = `
+    INSERT INTO medios
+      (nombre_archivo, tipo_mime, extension, ancho_px, alto_px,
+       datos, huella_sha256, origen, bytes, creado_en)
+    VALUES ($1,$2,$3,$4,$5, decode($6,'base64'), $7,$8,$9, NOW())
+    ON CONFLICT (huella_sha256) DO UPDATE
+      SET nombre_archivo = EXCLUDED.nombre_archivo,
+          tipo_mime      = EXCLUDED.tipo_mime,
+          extension      = EXCLUDED.extension,
+          ancho_px       = EXCLUDED.ancho_px,
+          alto_px        = EXCLUDED.alto_px,
+          origen         = EXCLUDED.origen,
+          bytes          = EXCLUDED.bytes
+    RETURNING id, nombre_archivo, tipo_mime, ancho_px, alto_px,
+              huella_sha256, origen, creado_en,
+              encode(datos,'base64') AS b64
+  `;
+  const { rows } = await query(sql, [filename, mime, ext, w, h, base64, sha, origin, bytes]);
+  const row = rows[0];
+
+  return {
+    ok: true,
+    id: row.id,
+    filename: row.nombre_archivo,
+    mime: row.tipo_mime,
+    width: row.ancho_px,
+    height: row.alto_px,
+    dataUrl: `data:${row.tipo_mime};base64,${row.b64}`,
+    sha256: row.huella_sha256,
+    origin: row.origen,
+    tags: [],                 // no tags en el esquema actual
+    created_at: row.creado_en
+  };
+});
+
+/* ===================== DISEÑO / PREVIEW ===================== */
+ipcMain.handle('design:savePreview', async (_evt, payload) => {
+  const pedidoId = Number(payload?.pedidoId || 0);
+  const partidaId = Number(payload?.partidaId || 0);
+  const medioId = Number(payload?.medioId || 0);
+  const nombrePlantilla = String(payload?.nombrePlantilla || null);
+  const lienzoAnchoPx = payload?.lienzoAnchoPx != null ? Number(payload.lienzoAnchoPx) : null;
+  const lienzoAltoPx = payload?.lienzoAltoPx != null ? Number(payload.lienzoAltoPx) : null;
+  const modoColor = String(payload?.modoColor || null);
+  const sangradoPx = payload?.sangradoPx != null ? Number(payload.sangradoPx) : null;
+
+  if (!pedidoId || !partidaId || !medioId) return { ok: false, error: 'payload incompleto' };
+
+  // Si no existe clave única (pedido_id, partida_id) en disenos, este upsert funciona igual
+  const sql = `
+    INSERT INTO disenos
+      (pedido_id, partida_id, titulo, nombre_plantilla,
+       lienzo_ancho_px, lienzo_alto_px, modo_color, sangrado_px,
+       preview_medio_id, estado, creado_en, actualizado_en)
+    VALUES
+      ($1,$2,$3,$4,$5,$6,$7,$8,$9,'borrador', now(), now())
+    ON CONFLICT (pedido_id, partida_id)
+    DO UPDATE SET
+      titulo            = EXCLUDED.titulo,
+      nombre_plantilla  = EXCLUDED.nombre_plantilla,
+      lienzo_ancho_px   = EXCLUDED.lienzo_ancho_px,
+      lienzo_alto_px    = EXCLUDED.lienzo_alto_px,
+      modo_color        = EXCLUDED.modo_color,
+      sangrado_px       = EXCLUDED.sangrado_px,
+      preview_medio_id  = EXCLUDED.preview_medio_id,
+      actualizado_en    = now()
+    RETURNING id
+  `;
+  const titulo = `Diseño partida #${partidaId}`;
+  const { rows } = await query(sql, [
+    pedidoId, partidaId, titulo, nombrePlantilla || null,
+    lienzoAnchoPx, lienzoAltoPx, modoColor || null, sangradoPx, medioId
+  ]);
+  return { ok: true, id: rows[0].id };
+});
+
+ipcMain.handle('design:listByPedido', async (_evt, pedidoId) => {
+  const sql = `
+    SELECT d.partida_id,
+           d.preview_medio_id AS medio_id,
+           m.nombre_archivo,
+           'data:' || m.tipo_mime || ';base64,' || encode(m.datos,'base64') AS dataurl
+    FROM disenos d
+    JOIN medios m ON m.id = d.preview_medio_id
+    WHERE d.pedido_id = $1
+    ORDER BY d.actualizado_en DESC
+  `;
+  const { rows } = await query(sql, [Number(pedidoId)]);
+  return rows.map(r => ({
+    partida_id: Number(r.partida_id),
+    medio_id: Number(r.medio_id),
+    nombre_archivo: r.nombre_archivo,
+    dataUrl: r.dataurl
+  }));
 });

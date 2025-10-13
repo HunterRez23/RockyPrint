@@ -139,3 +139,5 @@ textarea{resize:vertical; min-height:72px}
   .item .row1 .sel{grid-column: 1 / -1; }
   .item .row2{grid-template-columns: repeat(2, 1fr);}
 }
+.btn-out{ background:#ef4444; color:#fff; border:1px solid #b91c1c }
+.btn-out:hover{ filter:brightness(0.95) }

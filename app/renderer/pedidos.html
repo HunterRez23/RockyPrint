@@ -13,6 +13,9 @@
     <span class="badge">Tarjetas</span>
     <div class="spacer"></div>
     <button class="btn" id="exportCsvBtn">Exportar CSV</button>
+    <!-- ... dentro del header-row, antes/después de Exportar CSV -->
+<button class="btn" id="btnLogout">Cerrar sesión</button>
+
   </div>
 </header>
 
@@ -64,6 +67,31 @@
     Las entregas en <b class="late">rojo</b> están atrasadas.
   </p>
 </main>
+
+<!-- Modal de detalle de pedido -->
+<div id="orderModal" class="modal hidden" aria-hidden="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+    <header class="modal-head">
+      <h3 id="mTitle">Pedido <span id="mFolio">#</span></h3>
+      <button class="iconbtn" id="mClose" title="Cerrar">✕</button>
+    </header>
+    <section class="modal-body" id="mBody">
+      <!-- contenido dinámico (se llena desde pedidos.js) -->
+    </section>
+  </div>
+</div>
+
+<!-- Lightbox de preview -->
+<div id="previewLightbox" class="lb hidden" aria-hidden="true">
+  <div class="lb-backdrop"></div>
+  <figure class="lb-card">
+    <img id="lbImg" alt="Preview a tamaño completo" />
+    <div class="lb-tools">
+      <button class="btn" id="lbClose">Cerrar</button>
+    </div>
+  </figure>
+</div>
 
 <script src="js/pedidos.js"></script>
 </body>
