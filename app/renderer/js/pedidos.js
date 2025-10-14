@@ -1,44 +1,51 @@
 // app/renderer/js/pedidos.js
 (async () => {
-  const $  = (q) => document.querySelector(q);
+  const $ = (q) => document.querySelector(q);
   const $$ = (q) => Array.from(document.querySelectorAll(q));
 
   // === Auth & permisos mínimos ===
   try {
     const me = await window.api.auth.get();
     if (!me) { await window.api.navigate('login.html'); return; }
-    const rol = (me.rol || '').toLowerCase();
+
+    const rol = String(me.rol || '').trim().toLowerCase();
     const allowed = new Set(['produccion', 'caja', 'admin']);
     if (!allowed.has(rol)) {
       alert(`No tienes acceso a pedidos. Tu rol: ${rol}.`);
       await window.api.navigate('login.html');
       return;
     }
-    window.__canEdit = (rol === 'caja' || rol === 'admin');
+
+    // permisos por acción
+    window.__canEditCaja = (rol === 'caja' || rol === 'admin');                // editar en Caja
+    window.__canDelete = ['caja', 'admin', 'produccion'].includes(rol);        // borrar con contraseña
+
+    // debug opcional
+    // console.log('[pedidos] rol=', rol, 'canEditCaja=', window.__canEditCaja, 'canDelete=', window.__canDelete);
   } catch {
     await window.api.navigate('login.html');
     return;
   }
 
   // Filtros UI
-  const qEl     = $('#q');
-  const estEl   = $('#estado');
+  const qEl = $('#q');
+  const estEl = $('#estado');
   const desdeEl = $('#desde');
   const hastaEl = $('#hasta');
 
   // KPIs
-  const kTotal  = $('#kpiTotal');
-  const kProg   = $('#kpiProg');
-  const kLate   = $('#kpiLate');
+  const kTotal = $('#kpiTotal');
+  const kProg = $('#kpiProg');
+  const kLate = $('#kpiLate');
   const kDone30 = $('#kpiDone30');
 
-  // Modal refs
-  const modal   = $('#orderModal');
-  const mClose  = $('#mClose');
-  const mBody   = $('#mBody');
-  const mFolio  = $('#mFolio');
+  // Modal detalle
+  const modal = $('#orderModal');
+  const mClose = $('#mClose');
+  const mBody = $('#mBody');
+  const mFolio = $('#mFolio');
 
-  // Lightbox refs + estado
+  // Lightbox
   const lb = {
     root: document.getElementById('previewLightbox'),
     img: document.getElementById('lbImg'),
@@ -48,15 +55,15 @@
   };
   let lbCtx = null;
 
-  function openLightbox(ctx){
-    lbCtx = ctx;                    // { src, pedidoId, partidaId, partidaIndex }
+  function openLightbox(ctx) {
+    lbCtx = ctx;
     lb.img.src = ctx.src || '';
     lb.root.classList.remove('hidden');
-    lb.root.setAttribute('aria-hidden','false');
+    lb.root.setAttribute('aria-hidden', 'false');
   }
-  function closeLightbox(){
+  function closeLightbox() {
     lb.root.classList.add('hidden');
-    lb.root.setAttribute('aria-hidden','true');
+    lb.root.setAttribute('aria-hidden', 'true');
     lb.img.src = '';
     lbCtx = null;
   }
@@ -68,10 +75,10 @@
   lb.openLienzo?.addEventListener('click', async () => {
     if (!lbCtx) return;
     await window.api.navigate('lienzo.html', {
-      pedidoId:     String(lbCtx.pedidoId || ''),
-      partidaId:    String(lbCtx.partidaId || ''),
+      pedidoId: String(lbCtx.pedidoId || ''),
+      partidaId: String(lbCtx.partidaId || ''),
       partidaIndex: Number(lbCtx.partidaIndex || 0),
-      fullscreen:   true
+      fullscreen: true
     });
     closeLightbox();
   });
@@ -81,18 +88,18 @@
 
   // Utils
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('es-MX') : '-';
-  const fmtDT   = (d) => d ? new Date(d).toLocaleString('es-MX') : '-';
-  const isLate  = (d) => {
+  const fmtDT = (d) => d ? new Date(d).toLocaleString('es-MX') : '-';
+  const fmtMoney = (v) => (new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })).format(+v || 0);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  const isLate = (d) => {
     if (!d) return false;
-    const T=new Date(); T.setHours(0,0,0,0);
-    const D=new Date(d); D.setHours(0,0,0,0);
+    const T = new Date(); T.setHours(0, 0, 0, 0);
+    const D = new Date(d); D.setHours(0, 0, 0, 0);
     return D < T;
   };
-  const fmtMoney = (v) => (new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'})).format(+v || 0);
-  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
   // Cargar lista
-  async function loadData(){
+  async function loadData() {
     const filters = {
       q: qEl.value.trim() || null,
       estado: estEl.value || null,
@@ -103,25 +110,25 @@
     render();
   }
 
-  function renderKPIs(){
+  function renderKPIs() {
     const total = pedidos.length;
-    const prog  = pedidos.filter(x => x.estado === "En progreso").length;
-    const late  = pedidos.filter(x => isLate(x.fecha_entrega) && x.estado !== "Listo").length;
+    const prog = pedidos.filter(x => x.estado === "En progreso").length;
+    const late = pedidos.filter(x => isLate(x.fecha_entrega) && x.estado !== "Listo").length;
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 30);
     const done30 = pedidos.filter(x => x.estado === "Listo" && x.actualizado_en && new Date(x.actualizado_en) >= cutoff).length;
 
-    kTotal.textContent  = total;
-    kProg.textContent   = prog;
-    kLate.textContent   = late;
+    kTotal.textContent = total;
+    kProg.textContent = prog;
+    kLate.textContent = late;
     kDone30.textContent = done30;
   }
 
-  function render(){
+  function render() {
     const grid = $('#grid');
     grid.innerHTML = '';
     pedidos.forEach(p => {
       const card = document.createElement('article');
-      card.className='card';
+      card.className = 'card';
       card.dataset.id = p.id;
 
       const entrega = fmtDate(p.fecha_entrega);
@@ -140,7 +147,7 @@
 
         <div>
           <div class="meta">
-            Entrega: <b${isLate(p.fecha_entrega)?' class="late"':''}>${entrega}</b> ·
+            Entrega: <b${isLate(p.fecha_entrega) ? ' class="late"' : ''}>${entrega}</b> ·
             Actualizado: <b>${actualizado}</b> ·
             Total: <b>${totalFmt}</b>
           </div>
@@ -148,7 +155,8 @@
 
         <div class="tools">
           <button class="iconbtn" data-ver title="Ver / abrir">👁️</button>
-          ${window.__canEdit ? '<button class="iconbtn" data-editar title="Editar en Caja">✏️</button>' : ''}
+          ${window.__canEditCaja ? '<button class="iconbtn" data-editar title="Editar en Caja">✏️</button>' : ''}
+          ${window.__canDelete ? '<button class="iconbtn danger" data-borrar title="Eliminar pedido">🗑️</button>' : ''}
         </div>
       `;
 
@@ -158,19 +166,23 @@
       card.querySelector('[data-editar]')?.addEventListener('click', async () => {
         await window.api.navigate({ html: 'caja.html', ctx: { pedidoId: String(p.id) } });
       });
+      // 🗑️ → borrar con contraseña
+      card.querySelector('[data-borrar]')?.addEventListener('click', async () => {
+        await deleteOrderWithPassword(p.id, p.folio);
+      });
 
       grid.appendChild(card);
     });
     renderKPIs();
   }
 
-  // ========== MODAL ==========
-  async function openOrderModal(pedidoId){
+  // ========== MODAL DETALLE ==========
+  async function openOrderModal(pedidoId) {
     try {
       const data = await window.api.orders.get(pedidoId);
       if (!data) { alert('No se pudo cargar el pedido.'); return; }
 
-      const previews = await window.api.design.listByPedido(pedidoId).catch(()=>[]);
+      const previews = await window.api.design.listByPedido(pedidoId).catch(() => []);
       const mapPrev = new Map(previews.map(p => [Number(p.partida_id), p]));
 
       mFolio.textContent = `#${data.pedido.folio}`;
@@ -196,11 +208,11 @@
 
       const itemsRows = (data.partidas || []).map((it, idx) => {
         const prev = mapPrev.get(Number(it.id));
-        const prevImg = prev ? `<img class="preview-thumb" src="${prev.dataUrl}" alt="Preview ${idx+1}">` : '<span class="pill">Sin preview</span>';
+        const prevImg = prev ? `<img class="preview-thumb" src="${prev.dataUrl}" alt="Preview ${idx + 1}">` : '<span class="pill">Sin preview</span>';
 
         return `
           <tr>
-            <td>${idx+1}</td>
+            <td>${idx + 1}</td>
             <td>${esc(it.producto || '')}</td>
             <td>${esc(it.descripcion || '')}</td>
             <td style="text-align:right">${Number(it.ancho_cm || 0)}</td>
@@ -243,21 +255,15 @@
 
       mBody.innerHTML = headerHtml + tableHtml;
 
-      // Click miniatura → lightbox
+      // Miniatura → lightbox
       $$('#mBody img.preview-thumb').forEach(img => {
         const tr = img.closest('tr');
         const btn = tr?.querySelector('[data-open-lienzo]');
         const idx = Number(btn?.dataset.index || 0);
         const partId = Number(btn?.dataset.partida || 0);
-
         img.style.cursor = 'zoom-in';
         img.addEventListener('click', () => {
-          openLightbox({
-            src: img.src,
-            pedidoId: data.pedido.id,
-            partidaId: partId,
-            partidaIndex: idx
-          });
+          openLightbox({ src: img.src, pedidoId: data.pedido.id, partidaId: partId, partidaIndex: idx });
         });
       });
 
@@ -269,12 +275,7 @@
           const img = btn.closest('tr')?.querySelector('img.preview-thumb');
           const src = img?.src || '';
           if (!src) { alert('No hay preview generado para este ítem.'); return; }
-          openLightbox({
-            src,
-            pedidoId: data.pedido.id,
-            partidaId: partId,
-            partidaIndex: idx
-          });
+          openLightbox({ src, pedidoId: data.pedido.id, partidaId: partId, partidaIndex: idx });
         });
       });
 
@@ -285,13 +286,13 @@
     }
   }
 
-  function openModal(){
+  function openModal() {
     modal.classList.remove('hidden');
-    modal.setAttribute('aria-hidden','false');
+    modal.setAttribute('aria-hidden', 'false');
   }
-  function closeModal(){
+  function closeModal() {
     modal.classList.add('hidden');
-    modal.setAttribute('aria-hidden','true');
+    modal.setAttribute('aria-hidden', 'true');
     mBody.innerHTML = '';
   }
   mClose.addEventListener('click', closeModal);
@@ -308,10 +309,9 @@
 
   // Export CSV
   $('#exportCsvBtn')?.addEventListener('click', () => exportCSV(pedidos));
-
   function exportCSV(data) {
     if (!data.length) { alert('No hay datos para exportar.'); return; }
-    const headers = ['id','folio','cliente','estado','fecha_entrega','actualizado_en','total'];
+    const headers = ['id', 'folio', 'cliente', 'estado', 'fecha_entrega', 'actualizado_en', 'total'];
     const rows = data.map(p => ([
       p.id,
       safe(p.folio),
@@ -323,26 +323,100 @@
     ]));
     const csv = [headers.join(','), ...rows.map(r => r.map(csvEscape).join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url  = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href=url; a.download=`pedidos_${new Date().toISOString().slice(0,10)}.csv`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `pedidos_${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   }
-  const safe = v => (v==null?'':String(v));
+  const safe = v => (v == null ? '' : String(v));
   const csvEscape = v => {
     const s = String(v ?? '');
-    return (/[,\"\n]/.test(s)) ? `"${s.replace(/"/g,'""')}"` : s;
+    return (/[,\"\n]/.test(s)) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  // Logout
-document.getElementById('btnLogout')?.addEventListener('click', async () => {
-  try {
-    await window.api.auth.logout();               // limpia sesión y ui:ctx en main
-    localStorage.removeItem('rockyprint:caja:last');
-    await window.api.navigate('login.html');      // vuelve al login
-  } catch (e) {
-    alert('No se pudo cerrar sesión.');
-  }
-});
 
+  function askPassword(message = 'Escribe tu contraseña para continuar') {
+    const root = document.getElementById('pwdModal');
+    const msgEl = document.getElementById('pwdMsg');
+    const inEl = document.getElementById('pwdInput');
+    const okBtn = document.getElementById('pwdOk');
+    const cancel = document.getElementById('pwdCancel');
+    const closeX = document.getElementById('pwdClose');
+    const errEl = document.getElementById('pwdError');
+
+    return new Promise(resolve => {
+      const cleanup = (val = null) => {
+        root.classList.add('hidden');
+        root.setAttribute('aria-hidden', 'true');
+        okBtn.removeEventListener('click', onOk);
+        cancel.removeEventListener('click', onCancel);
+        closeX.removeEventListener('click', onCancel);
+        root.querySelector('.modal-backdrop')?.removeEventListener('click', onCancel);
+        document.removeEventListener('keydown', onKey);
+        errEl.textContent = '';
+        inEl.value = '';
+        resolve(val);
+      };
+      const onOk = () => {
+        const v = inEl.value.trim();
+        if (!v) { errEl.textContent = 'La contraseña no puede ir vacía.'; inEl.focus(); return; }
+        cleanup(v);
+      };
+      const onCancel = () => cleanup(null);
+      const onKey = (e) => { if (e.key === 'Enter') onOk(); if (e.key === 'Escape') onCancel(); };
+
+      msgEl.textContent = message;
+      root.classList.remove('hidden');
+      root.setAttribute('aria-hidden', 'false');
+
+      okBtn.addEventListener('click', onOk);
+      cancel.addEventListener('click', onCancel);
+      closeX.addEventListener('click', onCancel);
+      root.querySelector('.modal-backdrop')?.addEventListener('click', onCancel);
+      document.addEventListener('keydown', onKey);
+
+      // Forzar foco de forma robusta tras pintar el modal
+      const focusInput = () => { inEl.focus({ preventScroll: true }); inEl.select(); };
+      requestAnimationFrame(() => requestAnimationFrame(focusInput));
+    });
+  }
+
+
+  // ======== Borrar pedido con password del usuario ========
+  // Borrar pedido con password del usuario
+  async function deleteOrderWithPassword(pedidoId, folio) {
+    if (window.__canDelete !== true) {
+      alert('No tienes permisos para borrar.');
+      return;
+    }
+
+    // SIN confirm() nativo: el propio modal hace de confirmación
+    const pwd = await askPassword(`Para eliminar el pedido #${folio}, escribe tu contraseña.`);
+    if (pwd == null) return; // cancelado
+
+    const check = await window.api.auth.confirmPassword(pwd).catch(() => ({ ok: false }));
+    if (!check?.ok) { alert(check?.error || 'Contraseña incorrecta.'); return; }
+
+    const res = await window.api.orders.delete(pedidoId).catch(() => ({ ok: false }));
+    if (res?.ok) {
+      alert('Pedido eliminado.');
+      try { closeLightbox(); } catch { }
+      try { closeModal(); } catch { }
+      await loadData();
+    } else {
+      alert(res?.error || 'No se pudo eliminar el pedido.');
+    }
+  }
+
+
+  // Logout
+  document.getElementById('btnLogout')?.addEventListener('click', async () => {
+    try {
+      await window.api.auth.logout();
+      localStorage.removeItem('rockyprint:caja:last');
+      await window.api.navigate('login.html');
+    } catch {
+      alert('No se pudo cerrar sesión.');
+    }
+  });
 
   // Inicial
   await loadData();

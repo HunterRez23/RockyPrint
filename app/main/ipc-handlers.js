@@ -13,22 +13,13 @@ const store = new Store({ name: 'session' });
 
 /* ========= Helpers ========= */
 function ensureDataUrl(row) {
-  // Preferencia: dataUrl ya armado
   if (row?.dataUrl && /^data:/.test(row.dataUrl)) return row.dataUrl;
-
-  // Con tu esquema: tipo_mime + base64 (alias "b64") o Buffer "datos"
   if (row?.tipo_mime && row?.b64) return `data:${row.tipo_mime};base64,${row.b64}`;
   if (row?.tipo_mime && row?.datos && Buffer.isBuffer(row.datos)) {
     return `data:${row.tipo_mime};base64,${row.datos.toString('base64')}`;
   }
-
-  // Compatibilidad con otros nombres por si en el futuro existe
-  if (row?.mime && row?.data && !/^data:/.test(row.data)) {
-    return `data:${row.mime};base64,${row.data}`;
-  }
-  if (row?.mime_tipo && row?.data_base64) {
-    return `data:${row.mime_tipo};base64,${row.data_base64}`;
-  }
+  if (row?.mime && row?.data && !/^data:/.test(row.data)) return `data:${row.mime};base64,${row.data}`;
+  if (row?.mime_tipo && row?.data_base64) return `data:${row.mime_tipo};base64,${row.data_base64}`;
   return row?.data_base64 || row?.dataUrl || row?.data || '';
 }
 
@@ -52,6 +43,19 @@ ipcMain.handle('auth:login', async (_evt, { usuario, clave }) => {
 });
 ipcMain.handle('auth:get', async () => store.get('user') || null);
 ipcMain.handle('auth:logout', async () => { store.delete('user'); store.delete('ui:ctx'); return true; });
+
+/** Confirmación de contraseña del usuario en sesión */
+ipcMain.handle('auth:confirmPassword', async (_evt, password) => {
+  try {
+    const user = store.get('user');
+    if (!user?.usuario) return { ok: false, error: 'Sesión requerida' };
+    const res = await query('SELECT 1 FROM verificar_login($1,$2)', [user.usuario, password || '']);
+    if (!res.rows?.[0]) return { ok: false, error: 'Contraseña incorrecta' };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'No se pudo verificar la contraseña' };
+  }
+});
 
 /* ===================== UI / NAV ===================== */
 ipcMain.handle('ui:navigate', async (_evt, htmlOrObj, ctxArg) => {
@@ -134,6 +138,7 @@ async function asegurarCliente({ nombre, telefono, correo, rfc, factura, canal }
   return ins.rows[0].id;
 }
 
+// === normalizador con ids de partida ===
 function normalizarPedidoPayload(payload) {
   const c = payload.cliente || payload.client || {};
   const cliente = {
@@ -146,17 +151,20 @@ function normalizarPedidoPayload(payload) {
   };
 
   const items = (payload.items || []).map((it) => ({
+    id: (it.id ?? it.partida_id ?? it.partidaId ?? it.dbId ?? null) ? Number(it.id ?? it.partida_id ?? it.partidaId ?? it.dbId) : null,
+    cid: it.cid || it.cidClient || null,
     producto: it.producto || it.product || '',
     descripcion: it.desc || it.descripcion || '',
-    ancho_cm: Number(it.ancho ?? 0),
-    alto_cm: Number(it.alto ?? 0),
-    cantidad: Number(it.cant ?? 1),
-    info_color: it.color || '',
+    ancho_cm: Number(it.ancho ?? it.ancho_cm ?? 0),
+    alto_cm: Number(it.alto ?? it.alto_cm ?? 0),
+    cantidad: Number(it.cant ?? it.cantidad ?? 1),
+    info_color: it.color || it.info_color || '',
     acabados: it.acabados || '',
-    precio_unitario: Number(it.pu ?? 0),
+    precio_unitario: Number(it.pu ?? it.precio_unitario ?? 0),
   }));
 
   return {
+    id: Number(payload.id || payload.pedidoId || 0) || null,
     folio: payload.folio,
     estado: payload.estado || 'Pendiente',
     sucursal_usuario: payload.sucursal || null,
@@ -200,16 +208,10 @@ ipcMain.handle('orders:create', async (_evt, payloadRaw) => {
             $${idx + 6},$${idx + 7},$${idx + 8},$${idx + 9},$${idx + 10})`
         );
         params.push(
-          pedidoId,
-          it.producto,
-          it.descripcion || null,
-          it.ancho_cm || 0,
-          it.alto_cm || 0,
-          it.cantidad || 1,
-          it.info_color || null,
-          it.acabados || null,
-          it.precio_unitario || 0,
-          (it.precio_unitario || 0) * (it.cantidad || 0)
+          pedidoId, it.producto, it.descripcion || null,
+          it.ancho_cm || 0, it.alto_cm || 0, it.cantidad || 1,
+          it.info_color || null, it.acabados || null,
+          it.precio_unitario || 0, (it.precio_unitario || 0) * (it.cantidad || 0)
         );
       });
 
@@ -226,6 +228,127 @@ ipcMain.handle('orders:create', async (_evt, payloadRaw) => {
   } catch (e) {
     if (e.code === '23505') return { ok: false, code: '23505', error: 'Folio ya existe' };
     return { ok: false, code: e.code || null, error: e.detail || e.message || 'No se pudo crear el pedido' };
+  }
+});
+
+/** Guardar/actualizar pedido + partidas (conserva IDs) */
+ipcMain.handle('orders:save', async (_evt, payloadRaw) => {
+  const p = normalizarPedidoPayload(payloadRaw);
+  const pedidoId = Number(p.id || 0);
+
+  const clienteId = await asegurarCliente(p.cliente);
+  const total = calcularTotal(p.items);
+
+  if (!pedidoId) {
+    const ins = await query(
+      `INSERT INTO pedidos
+        (folio, cliente_id, estado, sucursal_usuario, prioridad,
+         fecha_entrega, hora_entrega, total, anticipo, metodo_pago, creado_en, actualizado_en)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW(), NOW())
+       RETURNING id`,
+      [
+        p.folio, clienteId, p.estado, p.sucursal_usuario, p.prioridad,
+        p.fecha_entrega || null, p.hora_entrega || null,
+        total, p.anticipo || 0, p.metodo_pago || 'Efectivo'
+      ]
+    );
+    const newId = ins.rows[0].id;
+
+    if (p.items.length) {
+      const values = [];
+      const params = [];
+      p.items.forEach((it, i) => {
+        const idx = i * 10;
+        values.push(
+          `($${idx + 1},$${idx + 2},$${idx + 3},$${idx + 4},$${idx + 5},
+            $${idx + 6},$${idx + 7},$${idx + 8},$${idx + 9},$${idx + 10})`
+        );
+        params.push(
+          newId, it.producto, it.descripcion || null,
+          it.ancho_cm || 0, it.alto_cm || 0, it.cantidad || 1,
+          it.info_color || null, it.acabados || null,
+          it.precio_unitario || 0, (it.precio_unitario || 0) * (it.cantidad || 0)
+        );
+      });
+
+      await query(
+        `INSERT INTO partidas
+          (pedido_id, producto, descripcion, ancho_cm, alto_cm,
+           cantidad, info_color, acabados, precio_unitario, subtotal)
+         VALUES ${values.join(',')}`,
+        params
+      );
+    }
+
+    return { ok: true, id: newId, partMap: [] };
+  }
+
+  await query('BEGIN');
+  try {
+    await query(
+      `UPDATE pedidos
+         SET folio=$2, cliente_id=$3, estado=$4, sucursal_usuario=$5, prioridad=$6,
+             fecha_entrega=$7, hora_entrega=$8, total=$9, anticipo=$10, metodo_pago=$11,
+             actualizado_en=NOW()
+       WHERE id=$1`,
+      [
+        pedidoId, p.folio, clienteId, p.estado, p.sucursal_usuario, p.prioridad,
+        p.fecha_entrega || null, p.hora_entrega || null,
+        total, p.anticipo || 0, p.metodo_pago || 'Efectivo'
+      ]
+    );
+
+    const existing = await query(`SELECT id FROM partidas WHERE pedido_id=$1`, [pedidoId]);
+    const existingIds = new Set(existing.rows.map(r => Number(r.id)));
+
+    const keptIds = new Set();
+    const partMap = [];
+
+    for (const it of (p.items || [])) {
+      const sid = Number(it.id || 0);
+      const subtotal = (Number(it.precio_unitario || 0) * Number(it.cantidad || 0)) || 0;
+
+      if (sid && existingIds.has(sid)) {
+        await query(
+          `UPDATE partidas SET
+             producto=$2, descripcion=$3, ancho_cm=$4, alto_cm=$5,
+             cantidad=$6, info_color=$7, acabados=$8, precio_unitario=$9, subtotal=$10
+           WHERE id=$1`,
+          [sid, it.producto, it.descripcion || null, it.ancho_cm || 0, it.alto_cm || 0,
+           it.cantidad || 1, it.info_color || null, it.acabados || null, it.precio_unitario || 0, subtotal]
+        );
+        keptIds.add(sid);
+        if (it.cid) partMap.push({ cid: it.cid, id: sid });
+      } else {
+        const insP = await query(
+          `INSERT INTO partidas
+            (pedido_id, producto, descripcion, ancho_cm, alto_cm,
+             cantidad, info_color, acabados, precio_unitario, subtotal)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           RETURNING id`,
+          [pedidoId, it.producto, it.descripcion || null, it.ancho_cm || 0, it.alto_cm || 0,
+           it.cantidad || 1, it.info_color || null, it.acabados || null, it.precio_unitario || 0, subtotal]
+        );
+        const newPartId = insP.rows[0].id;
+        keptIds.add(newPartId);
+        if (it.cid) partMap.push({ cid: it.cid, id: newPartId });
+      }
+    }
+
+    const toDelete = [...existingIds].filter(id => !keptIds.has(id));
+    if (toDelete.length) {
+      await query(`DELETE FROM partidas WHERE pedido_id=$1 AND id = ANY($2)`, [pedidoId, toDelete]);
+      // Si tu FK en disenos no es CASCADE por partida, también limpia:
+      // await query(`DELETE FROM disenos WHERE pedido_id=$1 AND partida_id = ANY($2)`, [pedidoId, toDelete]);
+    }
+
+    await query(`UPDATE pedidos SET actualizado_en=NOW() WHERE id=$1`, [pedidoId]);
+
+    await query('COMMIT');
+    return { ok: true, id: pedidoId, partMap };
+  } catch (err) {
+    await query('ROLLBACK');
+    return { ok: false, error: String(err?.detail || err?.message || err) };
   }
 });
 
@@ -310,10 +433,29 @@ ipcMain.handle('orders:recalcTotals', async (_evt, pedidoId) => {
   return { ok: true, total };
 });
 
-/* ===================== MEDIA (logos / previews) ===================== */
-/* Adaptado a tu esquema: tipo_mime, datos bytea, creado_en; sin 'tags' */
+/** Eliminar pedido (con cascada manual por si faltan FKs) */
+ipcMain.handle('orders:delete', async (_evt, pedidoIdRaw) => {
+  const pedidoId = Number(pedidoIdRaw || 0);
+  if (!pedidoId) return { ok: false, error: 'ID inválido' };
+  await query('BEGIN');
+  try {
+    // Primero disenos (por si el FK no es cascade por partida)
+    await query(`DELETE FROM disenos WHERE pedido_id=$1`, [pedidoId]);
+    // Luego partidas del pedido
+    await query(`DELETE FROM partidas WHERE pedido_id=$1`, [pedidoId]);
+    // Finalmente el pedido
+    await query(`DELETE FROM pedidos WHERE id=$1`, [pedidoId]);
+    await query('COMMIT');
+    return { ok: true };
+  } catch (e) {
+    await query('ROLLBACK');
+    return { ok: false, error: e.detail || e.message || 'No se pudo eliminar el pedido' };
+  }
+});
+
+/* ===================== MEDIA ===================== */
 ipcMain.handle('media:list', async (_evt, filter = {}) => {
-  const tag = filter.tag || null; // usamos 'origen' como canal (p.ej. 'logo' o 'preview')
+  const tag = filter.tag || null;
 
   let sql = `
     SELECT id,
@@ -326,10 +468,7 @@ ipcMain.handle('media:list', async (_evt, filter = {}) => {
     FROM medios
   `;
   const params = [];
-  if (tag) {
-    sql += ` WHERE origen = $1`;
-    params.push(tag);
-  }
+  if (tag) { sql += ` WHERE origen = $1`; params.push(tag); }
   sql += ` ORDER BY creado_en DESC LIMIT 500`;
 
   const { rows } = await query(sql, params);
@@ -342,7 +481,7 @@ ipcMain.handle('media:list', async (_evt, filter = {}) => {
     dataUrl: `data:${r.tipo_mime};base64,${r.b64}`,
     sha256: r.huella_sha256,
     origin: r.origen,
-    tags: [],                // no existe columna tags en tu tabla
+    tags: [],
     created_at: r.creado_en
   }));
 });
@@ -362,7 +501,6 @@ ipcMain.handle('media:upload', async (_evt, payload) => {
   const base64 = dataUrlOrBase64.replace(/^data:[^,]+,/, '');
   const ext = (filename.split('.').pop() || '').toLowerCase() || null;
 
-  // tamaño en bytes aproximado
   const bytes = Math.max(0,
     Math.floor(base64.length * 3 / 4) - (base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0)
   );
@@ -397,7 +535,7 @@ ipcMain.handle('media:upload', async (_evt, payload) => {
     dataUrl: `data:${row.tipo_mime};base64,${row.b64}`,
     sha256: row.huella_sha256,
     origin: row.origen,
-    tags: [],                 // no tags en el esquema actual
+    tags: [],
     created_at: row.creado_en
   };
 });
@@ -415,7 +553,6 @@ ipcMain.handle('design:savePreview', async (_evt, payload) => {
 
   if (!pedidoId || !partidaId || !medioId) return { ok: false, error: 'payload incompleto' };
 
-  // Si no existe clave única (pedido_id, partida_id) en disenos, este upsert funciona igual
   const sql = `
     INSERT INTO disenos
       (pedido_id, partida_id, titulo, nombre_plantilla,
@@ -461,4 +598,62 @@ ipcMain.handle('design:listByPedido', async (_evt, pedidoId) => {
     nombre_archivo: r.nombre_archivo,
     dataUrl: r.dataurl
   }));
+});
+
+/* ===================== CLIENTES (búsqueda/autofill) ===================== */
+/** Buscar clientes por nombre/correo/teléfono (para datalist) */
+ipcMain.handle('clientes:search', async (_evt, qRaw) => {
+  const q = String(qRaw || '').trim();
+  if (!q) return [];
+  const like = `%${q}%`;
+  const sql = `
+    SELECT id, nombre, telefono, correo, rfc, facturar, canal
+    FROM clientes
+    WHERE nombre ILIKE $1 OR correo ILIKE $1 OR telefono ILIKE $1 OR rfc ILIKE $1
+    ORDER BY nombre ASC
+    LIMIT 12
+  `;
+  const { rows } = await query(sql, [like]);
+  return rows.map(r => ({
+    id: r.id,
+    nombre: r.nombre,
+    telefono: r.telefono,
+    correo: r.correo,
+    rfc: r.rfc,
+    facturar: !!r.facturar,
+    canal: r.canal
+  }));
+});
+
+/** Obtener 1 cliente por correo o teléfono (para autocompletar en blur) */
+ipcMain.handle('clientes:findOne', async (_evt, { correo=null, telefono=null } = {}) => {
+  if (!correo && !telefono) return null;
+  const sql = `
+    SELECT id, nombre, telefono, correo, rfc, facturar, canal
+    FROM clientes
+    WHERE ($1::text IS NOT NULL AND correo = $1::text)
+       OR ($2::text IS NOT NULL AND telefono = $2::text)
+    ORDER BY id DESC
+    LIMIT 1
+  `;
+  const { rows } = await query(sql, [correo, telefono]);
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    id: r.id, nombre: r.nombre, telefono: r.telefono, correo: r.correo,
+    rfc: r.rfc, facturar: !!r.facturar, canal: r.canal
+  };
+});
+
+/** Obtener cliente por id (para recordar último cliente usado) */
+ipcMain.handle('clientes:get', async (_evt, idRaw) => {
+  const id = Number(idRaw || 0);
+  if (!id) return null;
+  const { rows } = await query(`SELECT id, nombre, telefono, correo, rfc, facturar, canal FROM clientes WHERE id=$1`, [id]);
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    id: r.id, nombre: r.nombre, telefono: r.telefono, correo: r.correo,
+    rfc: r.rfc, facturar: !!r.facturar, canal: r.canal
+  };
 });

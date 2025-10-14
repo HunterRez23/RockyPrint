@@ -4,95 +4,133 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Pedidos — Tarjetas en grilla</title>
+  <!-- Hoja de estilos principal de esta pantalla -->
   <link rel="stylesheet" href="css/pedidos.css">
 </head>
 <body>
-<header class="header">
-  <div class="wrap header-row">
-    <div class="brand">📦 Pedidos — Imprenta</div>
-    <span class="badge">Tarjetas</span>
-    <div class="spacer"></div>
-    <button class="btn" id="exportCsvBtn">Exportar CSV</button>
-    <!-- ... dentro del header-row, antes/después de Exportar CSV -->
-<button class="btn" id="btnLogout">Cerrar sesión</button>
-
-  </div>
-</header>
-
-<main class="wrap">
-  <!-- Filtros -->
-  <section class="filters">
-    <div>
-      <label for="q">Buscar (ID, cliente, producto)</label>
-      <input id="q" placeholder="Ej. 2025-0123 / Offset / Lona" />
+  <!-- ===== Header ===== -->
+  <header class="header">
+    <div class="wrap header-row">
+      <div class="brand">📦 Pedidos — Imprenta</div>
+      <span class="badge">Tarjetas</span>
+      <div class="spacer"></div>
+      <button class="btn" id="exportCsvBtn">Exportar CSV</button>
+      <button class="btn" id="btnLogout">Cerrar sesión</button>
     </div>
-    <div>
-      <label for="estado">Estado</label>
-      <select id="estado">
-        <option value="">Todos</option>
-        <option>Pendiente</option>
-        <option>En progreso</option>
-        <option>Listo</option>
-        <option>En pausa</option>
-      </select>
-    </div>
-    <div>
-      <label for="desde">Desde (entrega)</label>
-      <input type="date" id="desde">
-    </div>
-    <div>
-      <label for="hasta">Hasta (entrega)</label>
-      <input type="date" id="hasta">
-    </div>
-    <div>
-      <button class="btn" id="filtrarBtn">Aplicar filtros</button>
-    </div>
-  </section>
+  </header>
 
-  <!-- KPIs -->
-  <section class="kpis">
-    <div class="kpi"><div class="kpi-h">Total</div><div class="kpi-v" id="kpiTotal">0</div></div>
-    <div class="kpi"><div class="kpi-h">En progreso</div><div class="kpi-v" id="kpiProg">0</div></div>
-    <div class="kpi"><div class="kpi-h">Atrasados</div><div class="kpi-v" id="kpiLate">0</div></div>
-    <div class="kpi"><div class="kpi-h">Completados (30 días)</div><div class="kpi-v" id="kpiDone30">0</div></div>
-  </section>
-
-  <!-- Grilla de tarjetas -->
-  <section class="grid" id="grid">
-    <!-- tarjetas renderizadas por JS -->
-  </section>
-
-  <p class="note">
-    💡 Arrastra una tarjeta usando el asa <b class="handle demo">⋮⋮</b> para cambiar el orden (prioridad visual).  
-    Las entregas en <b class="late">rojo</b> están atrasadas.
-  </p>
-</main>
-
-<!-- Modal de detalle de pedido -->
-<div id="orderModal" class="modal hidden" aria-hidden="true">
-  <div class="modal-backdrop"></div>
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="mTitle">
-    <header class="modal-head">
-      <h3 id="mTitle">Pedido <span id="mFolio">#</span></h3>
-      <button class="iconbtn" id="mClose" title="Cerrar">✕</button>
-    </header>
-    <section class="modal-body" id="mBody">
-      <!-- contenido dinámico (se llena desde pedidos.js) -->
+  <!-- ===== Main ===== -->
+  <main class="wrap">
+    <!-- Filtros -->
+    <section class="filters">
+      <div>
+        <label for="q">Buscar (ID, cliente, producto)</label>
+        <input id="q" placeholder="Ej. 2025-0123 / Offset / Lona" />
+      </div>
+      <div>
+        <label for="estado">Estado</label>
+        <select id="estado">
+          <option value="">Todos</option>
+          <option>Pendiente</option>
+          <option>En progreso</option>
+          <option>Listo</option>
+          <option>En pausa</option>
+        </select>
+      </div>
+      <div>
+        <label for="desde">Desde (entrega)</label>
+        <input type="date" id="desde">
+      </div>
+      <div>
+        <label for="hasta">Hasta (entrega)</label>
+        <input type="date" id="hasta">
+      </div>
+      <div>
+        <button class="btn" id="filtrarBtn">Aplicar filtros</button>
+      </div>
     </section>
-  </div>
-</div>
 
-<!-- Lightbox de preview -->
-<div id="previewLightbox" class="lb hidden" aria-hidden="true">
-  <div class="lb-backdrop"></div>
-  <figure class="lb-card">
-    <img id="lbImg" alt="Preview a tamaño completo" />
-    <div class="lb-tools">
-      <button class="btn" id="lbClose">Cerrar</button>
+    <!-- KPIs -->
+    <section class="kpis">
+      <div class="kpi">
+        <div class="kpi-h">Total</div>
+        <div class="kpi-v" id="kpiTotal">0</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-h">En progreso</div>
+        <div class="kpi-v" id="kpiProg">0</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-h">Atrasados</div>
+        <div class="kpi-v" id="kpiLate">0</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-h">Completados (30 días)</div>
+        <div class="kpi-v" id="kpiDone30">0</div>
+      </div>
+    </section>
+
+    <!-- Grilla de tarjetas -->
+    <section class="grid" id="grid">
+      <!-- tarjetas renderizadas por JS -->
+    </section>
+
+    <p class="note">
+      💡 Arrastra una tarjeta usando el asa <b class="handle demo">⋮⋮</b> para cambiar el orden (prioridad visual).
+      Las entregas en <b class="late">rojo</b> están atrasadas.
+    </p>
+  </main>
+
+  <!-- ===== Modal de detalle del pedido ===== -->
+  <div id="orderModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="mTitle" tabindex="-1">
+      <header class="modal-head">
+        <h3 id="mTitle">Pedido <span id="mFolio">#</span></h3>
+        <button class="iconbtn" id="mClose" title="Cerrar">✕</button>
+      </header>
+      <section class="modal-body" id="mBody">
+        <!-- contenido dinámico -->
+      </section>
     </div>
-  </figure>
-</div>
+  </div>
 
-<script src="js/pedidos.js"></script>
+  <!-- ===== Lightbox de preview ===== -->
+  <div id="previewLightbox" class="lb hidden" aria-hidden="true">
+    <div class="lb-backdrop"></div>
+    <figure class="lb-card">
+      <img id="lbImg" alt="Preview a tamaño completo" />
+      <div class="lb-tools">
+        <!-- Botón opcional para abrir lienzo a partir del preview (si lo usas en JS) -->
+        <!-- <button class="btn" id="lbOpenLienzo">Abrir en Lienzo</button> -->
+        <button class="btn" id="lbClose">Cerrar</button>
+      </div>
+    </figure>
+  </div>
+
+  <!-- ===== Modal de contraseña (para confirmar borrado) ===== -->
+  <div id="pwdModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pwdTitle" tabindex="-1">
+      <header class="modal-head">
+        <h3 id="pwdTitle">Confirmar acción</h3>
+        <button class="iconbtn" id="pwdClose" title="Cerrar">✕</button>
+      </header>
+      <section class="modal-body">
+        <p id="pwdMsg" style="margin-bottom:10px"></p>
+        <label for="pwdInput">Contraseña</label>
+        <!-- Sin autofocus; el JS hace focus() al abrir -->
+        <input type="password" id="pwdInput" placeholder="Tu contraseña" />
+        <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end">
+          <button class="btn" id="pwdCancel">Cancelar</button>
+          <button class="btn danger" id="pwdOk">Confirmar</button>
+        </div>
+        <div id="pwdError" style="color:#b91c1c;margin-top:8px"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- JS de la página -->
+  <script src="js/pedidos.js"></script>
 </body>
 </html>
