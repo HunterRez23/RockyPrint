@@ -1,5 +1,5 @@
 // app/preload.js
-// Asegúrate de que contextIsolation esté en true en BrowserWindow para usar contextBridge.
+// Asegúrate de que BrowserWindow tenga contextIsolation: true y preload apuntando a este archivo.
 const { contextBridge, ipcRenderer } = require('electron');
 
 const api = {
@@ -11,6 +11,20 @@ const api = {
     updatePartida: (partidaId, data)         => ipcRenderer.invoke('orders:updatePartida', { partidaId: Number(partidaId), data }),
     recalcTotals:  (pedidoId)                => ipcRenderer.invoke('orders:recalcTotals', Number(pedidoId)),
     delete:        (id)                      => ipcRenderer.invoke('orders:delete', Number(id)),
+
+    // Orden visual (no fijados)
+    setOrder:      (ids)                     => ipcRenderer.invoke('orders:setOrder', ids),
+
+    // ===== NUEVOS para "pin" global =====
+    // Orden dentro del bloque de fijados
+    setPinnedOrder:(ids)                     => ipcRenderer.invoke('orders:setPinnedOrder', ids),
+    // Fijar / quitar pin
+    togglePin:     (arg) => {
+      // admite togglePin({ id, pin }) o togglePin(id) (en cuyo caso pin=false)
+      const id  = Number(arg?.id ?? arg);
+      const pin = arg?.pin != null ? !!arg.pin : false;
+      return ipcRenderer.invoke('orders:togglePin', { id, pin });
+    },
   },
 
   auth: {
@@ -40,7 +54,7 @@ const api = {
     listByPedido: (pedidoId)                 => ipcRenderer.invoke('design:listByPedido', Number(pedidoId)),
   },
 
-  // === NUEVO: APIs de clientes para autocompletar / reutilizar datos ===
+  // === APIs de clientes para autocompletar / reutilizar datos ===
   clientes: {
     /** Buscar por nombre/correo/teléfono (para datalist) */
     search:  (q)                             => ipcRenderer.invoke('clientes:search', String(q || '')),

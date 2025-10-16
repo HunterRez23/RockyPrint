@@ -10,8 +10,8 @@
     escalaPxPorCm: 37.7952755906,
     zoom: 1,
     themeWhite: JSON.parse(localStorage.getItem('rp:lienzo:white') || 'false'),
-    templateUrl: null,                 // ← NUEVO
-    templateNatural: { w: 0, h: 0 },   // ← NUEVO
+    templateUrl: null,
+    templateNatural: { w: 0, h: 0 },
   };
 
   // refs
@@ -55,7 +55,6 @@
     templateVisual.style.backgroundPosition = 'center';
     templateVisual.classList.add('is-active');
 
-    // Guardamos para que composePreviewCanvas lo use
     state.templateUrl = url;
     preloadTemplateImage(url);
   }
@@ -70,7 +69,6 @@
     };
     img.src = url;
   }
-
 
   function setZoom(z) {
     state.zoom = Math.min(4, Math.max(0.2, z));
@@ -128,70 +126,182 @@
     bleedSel.value = '20';
   }
 
-  /* ========= capas de LOGO (drag + resize) ========= */
+  /* ========= LOGOS (drag + resize estilo Canva) ========= */
+  // Devuelve un contenedor .logo-item con el <img> dentro y 4 handlers.
   function makeDraggableResizable(imgEl) {
-    imgEl.classList.add('logo-layer');
-    imgEl.style.position = 'absolute';
-    imgEl.style.left = '10px';
-    imgEl.style.top = '10px';
-    imgEl.style.maxWidth = '100%';
-    imgEl.style.maxHeight = '100%';
-    imgEl.style.cursor = 'move';
-    imgEl.style.userSelect = 'none';
+    const MIN = 24;
 
-    // drag
+    // Contenedor (no afecta estilos globales; todo inline)
+    const wrap = document.createElement('div');
+    wrap.className = 'logo-item';
+    wrap.style.position = 'absolute';
+    wrap.style.left = '10px';
+    wrap.style.top = '10px';
+    wrap.style.zIndex = '30';
+    wrap.style.userSelect = 'none';
+    wrap.style.cursor = 'move';
+    wrap.style.boxSizing = 'border-box';
+    wrap.style.border = '1px dashed rgba(154,172,224,.0)';
+
+    // Imagen
+    imgEl.classList.add('logo-layer'); // compatibilidad con código existente
+    imgEl.style.display = 'block';
+    imgEl.style.width = '100%';
+    imgEl.style.height = 'auto';
+    imgEl.style.pointerEvents = 'none'; // el drag se maneja en el wrapper
+    wrap.appendChild(imgEl);
+
+    // Tamaño inicial: 30% del ancho del lienzo manteniendo proporción
+    const fitInitialSize = () => {
+      const W = artboard.clientWidth;
+      const target = Math.max(MIN, Math.round(W * 0.3));
+      const im = new Image();
+      im.onload = () => {
+        const ratio = (im.naturalHeight || im.height || 1) / (im.naturalWidth || im.width || 1);
+        const w = Math.min(target, artboard.clientWidth - 20);
+        const h = Math.max(MIN, Math.round(w * ratio));
+        wrap.style.width = `${w}px`;
+        wrap.style.height = `${h}px`;
+      };
+      im.src = imgEl.src;
+    };
+
+    // ===== Drag del contenedor =====
     let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
-    imgEl.addEventListener('mousedown', (e) => {
-      if (e.target.dataset.handle === 'resize') return;
-      dragging = true; sx = e.clientX; sy = e.clientY;
-      const r = imgEl.getBoundingClientRect();
+    const onDownDrag = (e) => {
+      if (e.target.dataset.handle) return; // si tocó un handler, no arrastrar
+      dragging = true;
+      sx = e.clientX; sy = e.clientY;
+      const r = wrap.getBoundingClientRect();
       const pr = artboard.getBoundingClientRect();
-      ox = (r.left - pr.left) / state.zoom;  // corregir por zoom
-      oy = (r.top - pr.top) / state.zoom;
+      ox = (r.left - pr.left) / state.zoom;
+      oy = (r.top  - pr.top ) / state.zoom;
       e.preventDefault();
-    });
-    window.addEventListener('mousemove', (e) => {
+    };
+    const onMoveDrag = (e) => {
       if (!dragging) return;
       const dx = (e.clientX - sx) / state.zoom;
       const dy = (e.clientY - sy) / state.zoom;
-      imgEl.style.left = Math.max(0, Math.min(artboard.clientWidth - imgEl.clientWidth, ox + dx)) + 'px';
-      imgEl.style.top = Math.max(0, Math.min(artboard.clientHeight - imgEl.clientHeight, oy + dy)) + 'px';
-    });
-    window.addEventListener('mouseup', () => dragging = false);
+      const maxX = artboard.clientWidth  - wrap.clientWidth;
+      const maxY = artboard.clientHeight - wrap.clientHeight;
+      const nx = Math.max(0, Math.min(maxX, ox + dx));
+      const ny = Math.max(0, Math.min(maxY, oy + dy));
+      wrap.style.left = `${nx}px`;
+      wrap.style.top  = `${ny}px`;
+    };
+    const onUpDrag = () => { dragging = false; };
 
-    // handle de resize
-    const h = document.createElement('div');
-    h.dataset.handle = 'resize';
-    h.style.position = 'absolute';
-    h.style.right = '-6px';
-    h.style.bottom = '-6px';
-    h.style.width = '12px';
-    h.style.height = '12px';
-    h.style.background = 'rgba(255,255,255,.9)';
-    h.style.border = '1px solid #9fb3ff';
-    h.style.borderRadius = '4px';
-    h.style.cursor = 'se-resize';
-    imgEl.appendChild(h);
+    wrap.addEventListener('mousedown', onDownDrag);
+    window.addEventListener('mousemove', onMoveDrag);
+    window.addEventListener('mouseup', onUpDrag);
 
-    let resizing = false, sw = 0, sh = 0, rsx = 0, rsy = 0;
-    h.addEventListener('mousedown', (e) => {
-      resizing = true; rsx = e.clientX; rsy = e.clientY; sw = imgEl.clientWidth; sh = imgEl.clientHeight;
+    // ===== Handles de resize (4 esquinas)
+    const createHandle = (pos, cursor) => {
+      const h = document.createElement('div');
+      h.dataset.handle = pos;
+      Object.assign(h.style, {
+        position: 'absolute',
+        width: '12px', height: '12px',
+        borderRadius: '4px',
+        background: 'rgba(255,255,255,.9)',
+        border: '1px solid #9fb3ff',
+        boxShadow: '0 1px 4px rgba(0,0,0,.15)',
+        cursor,
+        zIndex: '1'
+      });
+      if (pos.includes('n')) h.style.top = '-6px';
+      if (pos.includes('s')) h.style.bottom = '-6px';
+      if (pos.includes('w')) h.style.left = '-6px';
+      if (pos.includes('e')) h.style.right = '-6px';
+      wrap.appendChild(h);
+      return h;
+    };
+
+    const hNW = createHandle('nw', 'nwse-resize');
+    const hNE = createHandle('ne', 'nesw-resize');
+    const hSW = createHandle('sw', 'nesw-resize');
+    const hSE = createHandle('se', 'nwse-resize');
+
+    let resizing = false, start = null, keepRatio = true;
+    const onDownResize = (e) => {
+      resizing = true;
+      start = {
+        x: e.clientX, y: e.clientY,
+        w: wrap.clientWidth, h: wrap.clientHeight,
+        l: parseFloat(wrap.style.left || '0'),
+        t: parseFloat(wrap.style.top  || '0'),
+        handle: e.target.dataset.handle
+      };
+      wrap.style.border = '1px dashed rgba(154,172,224,.9)'; // borde visible durante resize
       e.stopPropagation(); e.preventDefault();
-    });
-    window.addEventListener('mousemove', (e) => {
+    };
+    const onMoveResize = (e) => {
       if (!resizing) return;
-      const dx = (e.clientX - rsx) / state.zoom;
-      const dy = (e.clientY - rsy) / state.zoom;
-      const nw = Math.max(24, sw + dx);
-      const nh = Math.max(24, sh + dy);
-      imgEl.style.width = nw + 'px';
-      imgEl.style.height = 'auto';
-      if (imgEl.clientHeight > artboard.clientHeight) {
-        imgEl.style.height = nh + 'px';
-        imgEl.style.width = 'auto';
+      keepRatio = !e.shiftKey; // mantener proporción por default; Shift = libre
+
+      const dx = (e.clientX - start.x) / state.zoom;
+      const dy = (e.clientY - start.y) / state.zoom;
+
+      let w = start.w, h = start.h, l = start.l, t = start.t;
+      const ratio = start.h / start.w || 1;
+
+      const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+      const MaxW = artboard.clientWidth;
+      const MaxH = artboard.clientHeight;
+
+      switch (start.handle) {
+        case 'se': {
+          w = clamp(start.w + dx, MIN, MaxW);
+          h = keepRatio ? Math.max(MIN, Math.round(w * ratio)) : clamp(start.h + dy, MIN, MaxH);
+          break;
+        }
+        case 'sw': {
+          w = clamp(start.w - dx, MIN, MaxW);
+          h = keepRatio ? Math.max(MIN, Math.round(w * ratio)) : clamp(start.h + dy, MIN, MaxH);
+          l = start.l + (start.w - w);
+          break;
+        }
+        case 'ne': {
+          w = clamp(start.w + dx, MIN, MaxW);
+          h = keepRatio ? Math.max(MIN, Math.round(w * ratio)) : clamp(start.h - dy, MIN, MaxH);
+          t = start.t + (start.h - h);
+          break;
+        }
+        case 'nw': {
+          w = clamp(start.w - dx, MIN, MaxW);
+          h = keepRatio ? Math.max(MIN, Math.round(w * ratio)) : clamp(start.h - dy, MIN, MaxH);
+          l = start.l + (start.w - w);
+          t = start.t + (start.h - h);
+          break;
+        }
       }
-    });
-    window.addEventListener('mouseup', () => resizing = false);
+
+      // Limitar al lienzo
+      l = clamp(l, 0, artboard.clientWidth  - w);
+      t = clamp(t, 0, artboard.clientHeight - h);
+
+      wrap.style.left = `${l}px`;
+      wrap.style.top  = `${t}px`;
+      wrap.style.width  = `${w}px`;
+      wrap.style.height = `${h}px`;
+    };
+    const onUpResize = () => {
+      if (!resizing) return;
+      resizing = false;
+      wrap.style.border = '1px dashed rgba(154,172,224,.0)'; // ocultar borde
+    };
+
+    [hNW, hNE, hSW, hSE].forEach(h => h.addEventListener('mousedown', onDownResize));
+    window.addEventListener('mousemove', onMoveResize);
+    window.addEventListener('mouseup', onUpResize);
+
+    // Hover (borde sutil)
+    wrap.addEventListener('mouseenter', () => { wrap.style.border = '1px dashed rgba(154,172,224,.5)'; });
+    wrap.addEventListener('mouseleave', () => { if (!resizing) wrap.style.border = '1px dashed rgba(154,172,224,.0)'; });
+
+    if (imgEl.complete) fitInitialSize(); else imgEl.addEventListener('load', fitInitialSize, { once: true });
+
+    return wrap;
   }
 
   async function openLogosModal() {
@@ -218,8 +328,8 @@
           const img = document.createElement('img');
           img.src = l.dataUrl; // data URL
           img.alt = l.filename;
-          makeDraggableResizable(img);
-          artboard.appendChild(img);
+          const node = makeDraggableResizable(img); // ← usar el contenedor con handlers
+          artboard.appendChild(node);
           closeLogosModal();
         });
         grid.appendChild(card);
@@ -278,7 +388,7 @@
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, w, h);
 
-    // 2) DIBUJAR TEMPLATE (de fondo) – usando "contain" y centrado
+    // 2) Template de fondo (contain y centrado)
     const tplUrl = getTemplateUrl();
     if (tplUrl) {
       await new Promise((resolve) => {
@@ -286,7 +396,7 @@
         im.onload = () => {
           const tw = im.naturalWidth || im.width || 1;
           const th = im.naturalHeight || im.height || 1;
-          const s = Math.min(w / tw, h / th);   // contain
+          const s = Math.min(w / tw, h / th);
           const dw = Math.round(tw * s);
           const dh = Math.round(th * s);
           const dx = Math.round((w - dw) / 2);
@@ -294,15 +404,38 @@
           ctx.drawImage(im, dx, dy, dw, dh);
           resolve();
         };
-        // Para file:///SVG/PNG en Electron no hace falta CORS, pero no estorba:
         im.crossOrigin = 'anonymous';
         im.src = tplUrl;
       });
     }
 
-    // 3) LOGOS / capas de arte en su posición actual
-    const layers = $$('.logo-layer', artboard);
-    for (const node of layers) {
+    // 3) LOGOS / capas — soporta contenedores .logo-item y legacy <img.logo-layer>
+    // 3a) Contenedores nuevos
+    const wrappers = $$('.logo-item', artboard);
+    for (const wrap of wrappers) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => {
+        const img = wrap.querySelector('img');
+        if (!img) return resolve();
+        const im = new Image();
+        im.onload = () => {
+          const rect = wrap.getBoundingClientRect();
+          const pr = artboard.getBoundingClientRect();
+          const x = rect.left - pr.left;
+          const y = rect.top  - pr.top;
+          const w2 = wrap.clientWidth;
+          const h2 = wrap.clientHeight || Math.round(w2 * (im.naturalHeight || 1) / (im.naturalWidth || 1));
+          ctx.drawImage(im, x, y, w2, h2);
+          resolve();
+        };
+        im.crossOrigin = 'anonymous';
+        im.src = img.src;
+      });
+    }
+
+    // 3b) Compatibilidad con capas antiguas (img.logo-layer sin wrapper)
+    const legacyLayers = $$('.logo-layer', artboard).filter(n => !n.closest('.logo-item'));
+    for (const node of legacyLayers) {
       // eslint-disable-next-line no-await-in-loop
       await new Promise((resolve) => {
         const im = new Image();
@@ -310,7 +443,7 @@
           const rect = node.getBoundingClientRect();
           const pr = artboard.getBoundingClientRect();
           const x = rect.left - pr.left;
-          const y = rect.top - pr.top;
+          const y = rect.top  - pr.top;
           const iw = node.clientWidth;
           const ih = node.clientHeight;
           ctx.drawImage(im, x, y, iw, ih);
@@ -325,10 +458,9 @@
     return canvas.toDataURL('image/png');
   }
 
-
   async function saveDesign() {
     try {
-      // 1) actualizar ancho/alto (cm) y, si aplica, el producto con la plantilla
+      // 1) actualizar ancho/alto (cm) y, si aplica, producto
       const cmW = pxToCm(Number(widthInput.value || 0));
       const cmH = pxToCm(Number(heightInput.value || 0));
 
@@ -348,8 +480,6 @@
         subtotal
       };
 
-      // ← Aquí escribimos la plantilla en el campo "producto"
-      // Solo si estaba vacío (para no sobreescribir manuales)
       const chosenTpl = (tplName.value || '').trim();
       if (chosenTpl && (!part.producto || String(part.producto).trim() === '')) {
         updateData.producto = chosenTpl;
@@ -394,7 +524,6 @@
       }));
 
       toast('Guardado', 'Preview generado y enlazado.');
-      // Regresar a caja con el contexto del pedido
       await window.api.navigate('caja.html', { pedidoId: String(state.pedidoId) });
     } catch (err) {
       console.error('[lienzo] saveDesign error', err);
@@ -424,7 +553,7 @@
   }
 
   function bindUI() {
-    // Plantillas (selección por radios)
+    // Plantillas (radios)
     $('#templateRadios')?.addEventListener('change', (e) => {
       const r = e.target.closest('input[type=radio][name=tpl]');
       if (!r) return;
@@ -438,7 +567,6 @@
     });
 
     widthInput.addEventListener('input', () => setArtboardSize(Number(widthInput.value || 1), Number(heightInput.value || 1)));
-    // (fix) alto debe usar (width,height) en ese orden
     heightInput.addEventListener('input', () => setArtboardSize(Number(widthInput.value || 1), Number(heightInput.value || 1)));
 
     $('#toggleGrid').addEventListener('change', (e) => artboard.classList.toggle('grid', !!e.target.checked));
@@ -466,15 +594,14 @@
     $('#btnCloseLogos').addEventListener('click', closeLogosModal);
     $('#btnUploadLogo').addEventListener('click', uploadLogoFromFileInput);
   }
+
   function extractBgUrl(el) {
     const bg = getComputedStyle(el).backgroundImage || '';
-    // formatos posibles: url("file:///..."), url(file:///...), none
     const m = bg.match(/url\((?:'|")?(.*?)(?:'|")?\)/i);
     return m ? m[1] : null;
   }
 
   function getTemplateUrl() {
-    // preferimos la guardada; si no, leemos del CSS por si algo la borró
     return state.templateUrl || extractBgUrl(templateVisual) || null;
   }
 

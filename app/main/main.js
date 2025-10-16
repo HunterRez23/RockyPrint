@@ -2,34 +2,43 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import 'dotenv/config';
-
-// IMPORTA los handlers UNA sola vez (auth, orders, navegar, etc.)
-import './ipc-handlers.js';
+import fs from 'node:fs';
+import dotenv from 'dotenv';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.NODE_ENV === 'development';
 
+// --- Cargar .env (dev: raíz del proyecto, prod: resources/.env) ---
+const devEnvPath  = path.resolve(__dirname, '../../.env');
+const prodEnvPath = path.join(process.resourcesPath || '', '.env');
+const envPath = isDev && fs.existsSync(devEnvPath) ? devEnvPath
+               : fs.existsSync(prodEnvPath)       ? prodEnvPath
+               : devEnvPath; // fallback
+
+dotenv.config({ path: envPath });
+
+// ⚠️ Importa handlers DESPUÉS de cargar dotenv, para que vean PG_URL/PG_SSL
+await import('./ipc-handlers.js');
+
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
 app.setAppUserModelId('com.rockyprint.app');
 
-// Evita dos instancias
+// Evitar doble instancia
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
 
-// Crea la ventana principal
 function createWin(startHtml = 'login.html') {
   const win = new BrowserWindow({
-    fullscreen: false,          // Pantalla completa
-    autoHideMenuBar: false,
-    show: false,
     width: 1300,
     height: 900,
+    fullscreen: false,
+    autoHideMenuBar: false,
+    show: false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,          // necesario para usar Node en preload con contextBridge
+      sandbox: false,
       preload: path.join(__dirname, '../preload/preload.cjs'),
     },
   });

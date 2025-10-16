@@ -13,10 +13,10 @@
       <h1>Iniciar sesión</h1>
 
       <label>Usuario</label>
-      <input id="usuario" placeholder="Ej. caja1" autofocus />
+      <input id="usuario" placeholder="Ej. caja1" autofocus autocomplete="username" />
 
       <label>Contraseña</label>
-      <input id="clave" type="password" placeholder="••••••••" />
+      <input id="clave" type="password" placeholder="••••••••" autocomplete="current-password" />
 
       <label>Área</label>
       <select id="area">
@@ -25,7 +25,7 @@
         <option value="admin">Admin</option>
       </select>
 
-      <button type="submit" class="btn">Entrar</button>
+      <button type="submit" class="btn" id="btnLogin">Entrar</button>
       <p id="err" class="err"></p>
       <p class="hint">Roles soportados: <b>caja</b>, <b>produccion</b>, <b>admin</b>.</p>
     </form>
@@ -34,4 +34,3 @@
   <script src="js/login.js"></script>
 </body>
 </html>
-

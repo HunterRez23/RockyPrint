@@ -21,7 +21,7 @@
     } catch { await window.api.navigate('login.html'); return; }
   })();
 
-  const $  = (q, ctx = document) => ctx.querySelector(q);
+  const $ = (q, ctx = document) => ctx.querySelector(q);
   const $$ = (q, ctx = document) => Array.from(ctx.querySelectorAll(q));
   const fmtMoney = (v) => (new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })).format(+v || 0);
   const clamp = (v, min, max) => Math.min(Math.max(+v || 0, min), max);
@@ -31,12 +31,12 @@
 
   // ----------- REFERENCIAS DE CLIENTE + DATALIST (SEGURO) -----------
   const lastClientMap = new Map(); // "Nombre | Tel | Correo" -> row
-  const cliNombreEl  = document.getElementById('cliNombre');
-  const cliTelEl     = document.getElementById('cliTel');
-  const cliEmailEl   = document.getElementById('cliEmail');
-  const cliRFCEl     = document.getElementById('cliRFC');
+  const cliNombreEl = document.getElementById('cliNombre');
+  const cliTelEl = document.getElementById('cliTel');
+  const cliEmailEl = document.getElementById('cliEmail');
+  const cliRFCEl = document.getElementById('cliRFC');
   const cliFacturaEl = document.getElementById('factura');
-  const cliCanalEl   = document.getElementById('canal');
+  const cliCanalEl = document.getElementById('canal');
 
   // Crea (si no existe) datalist y engancha al input
   const dlClientes = document.getElementById('dlClientes') || (() => {
@@ -66,12 +66,12 @@
   })();
 
   function fillFromCliente(cli) {
-    if (cliNombreEl)  cliNombreEl.value  = cli.nombre   || '';
-    if (cliTelEl)     cliTelEl.value     = cli.telefono || '';
-    if (cliEmailEl)   cliEmailEl.value   = cli.correo   || '';
-    if (cliRFCEl)     cliRFCEl.value     = cli.rfc      || '';
+    if (cliNombreEl) cliNombreEl.value = cli.nombre || '';
+    if (cliTelEl) cliTelEl.value = cli.telefono || '';
+    if (cliEmailEl) cliEmailEl.value = cli.correo || '';
+    if (cliRFCEl) cliRFCEl.value = cli.rfc || '';
     if (cliFacturaEl) cliFacturaEl.value = cli.facturar ? 'si' : 'no';
-    if (cliCanalEl)   cliCanalEl.value   = cli.canal    || 'Mostrador';
+    if (cliCanalEl) cliCanalEl.value = cli.canal || 'Mostrador';
 
     state.cliente = {
       nombre: cli.nombre || '',
@@ -82,13 +82,13 @@
       canal: cli.canal || 'Mostrador'
     };
     saveLocal();
-    try { localStorage.setItem('rp:lastClientId', String(cli.id)); } catch {}
+    try { localStorage.setItem('rp:lastClientId', String(cli.id)); } catch { }
     toast('Cliente cargado', cli.nombre || '');
   }
 
   async function tryAutoFillByEmailOrPhone() {
-    const correo   = (cliEmailEl?.value || '').trim();
-    const telefono = (cliTelEl?.value   || '').trim();
+    const correo = (cliEmailEl?.value || '').trim();
+    const telefono = (cliTelEl?.value || '').trim();
     if (!correo && !telefono) return;
     const cli = await window.api.clientes
       .findOne({ correo: correo || null, telefono: telefono || null })
@@ -98,34 +98,52 @@
 
   function applyCliente(row) {
     state.clienteId = row.id;
-    if (cliNombreEl)  cliNombreEl.value  = row.nombre   || '';
-    if (cliTelEl)     cliTelEl.value     = row.telefono || '';
-    if (cliEmailEl)   cliEmailEl.value   = row.correo   || '';
-    if (cliRFCEl)     cliRFCEl.value     = row.rfc      || '';
-    if (cliFacturaEl) cliFacturaEl.value = row.facturar ? 'si' : 'no';
-    if (cliCanalEl)   cliCanalEl.value   = row.canal    || 'Mostrador';
-    toggleClienteLock(true);
+
+    const normalized = {
+      nombre: row.nombre || '',
+      tel: row.telefono || '',
+      email: row.correo || '',
+      rfc: row.rfc || '',
+      factura: row.facturar ? 'si' : 'no',
+      canal: row.canal || 'Mostrador'
+    };
+    state.cliente = { ...normalized };
+
+    if (cliNombreEl) cliNombreEl.value = normalized.nombre;
+    if (cliTelEl)    cliTelEl.value    = normalized.tel;
+    if (cliEmailEl)  cliEmailEl.value  = normalized.email;
+    if (cliRFCEl)    cliRFCEl.value    = normalized.rfc;
+    if (cliFacturaEl)cliFacturaEl.value= normalized.factura;
+    if (cliCanalEl)  cliCanalEl.value  = normalized.canal;
+
+    // >>> SIEMPRE EDITABLES <<<
+    toggleClienteLock(false);
     cliClearBtn.style.display = 'inline-block';
     saveLocal();
   }
 
-  function toggleClienteLock(lock) {
-    [cliNombreEl, cliTelEl, cliEmailEl, cliRFCEl].forEach(el => { if (el) el.readOnly = lock; });
-    if (cliFacturaEl) cliFacturaEl.disabled = lock;
-    if (cliCanalEl)   cliCanalEl.disabled   = lock;
+  // >>> MODIFICADO: nunca bloquear edición
+  function toggleClienteLock(_lock) {
+    [cliNombreEl, cliTelEl, cliEmailEl, cliRFCEl].forEach(el => { if (el) el.readOnly = false; });
+    if (cliFacturaEl) cliFacturaEl.disabled = false;
+    if (cliCanalEl)   cliCanalEl.disabled   = false;
   }
 
   function clearClienteSelection(clearFields = false) {
     state.clienteId = null;
     toggleClienteLock(false);
     cliClearBtn.style.display = 'none';
+
+    // Limpia estado
+    state.cliente = { nombre:'', tel:'', email:'', rfc:'', factura:'no', canal:'Mostrador' };
+
     if (clearFields) {
-      if (cliNombreEl)  cliNombreEl.value  = '';
-      if (cliTelEl)     cliTelEl.value     = '';
-      if (cliEmailEl)   cliEmailEl.value   = '';
-      if (cliRFCEl)     cliRFCEl.value     = '';
-      if (cliFacturaEl) cliFacturaEl.value = 'no';
-      if (cliCanalEl)   cliCanalEl.value   = 'Mostrador';
+      if (cliNombreEl) cliNombreEl.value = '';
+      if (cliTelEl)    cliTelEl.value    = '';
+      if (cliEmailEl)  cliEmailEl.value  = '';
+      if (cliRFCEl)    cliRFCEl.value    = '';
+      if (cliFacturaEl)cliFacturaEl.value= 'no';
+      if (cliCanalEl)  cliCanalEl.value  = 'Mostrador';
     }
     dlClientes.innerHTML = '';
     lastClientMap.clear();
@@ -143,22 +161,24 @@
       rows.forEach(r => {
         const label = `${r.nombre || '-'} | ${r.telefono || '-'} | ${r.correo || '-'}`;
         const opt = document.createElement('option');
-        opt.value = label;               // lo que el usuario ve/elige
+        opt.value = label;
         dlClientes.appendChild(opt);
-        lastClientMap.set(label, r);     // mapeamos label -> fila
+        lastClientMap.set(label, r);
       });
     }, 200));
 
     cliNombreEl.addEventListener('change', () => {
       const key = cliNombreEl.value.trim();
       const row = lastClientMap.get(key);
-      if (row) applyCliente(row); // si escogió de la lista exacta
+      if (row) applyCliente(row);
     });
   }
 
   if (cliEmailEl) cliEmailEl.addEventListener('blur', tryAutoFillByEmailOrPhone);
   if (cliTelEl)   cliTelEl.addEventListener('blur', tryAutoFillByEmailOrPhone);
-  if (cliClearBtn) cliClearBtn.addEventListener('click', () => clearClienteSelection(false));
+
+  // >>> MODIFICADO: limpiar TODO al pulsar el botón
+  if (cliClearBtn) cliClearBtn.addEventListener('click', () => clearClienteSelection(true));
 
   // ------------------ ESTADO / INICIALIZACIÓN ------------------
   const params = new URLSearchParams(location.search);
@@ -191,7 +211,7 @@
         const ctx = await window.api.ui.getContext();
         const ctxPid = Number(ctx?.pedidoId || 0);
         if (ctxPid) currentPedidoId = ctxPid;
-      } catch {}
+      } catch { }
     }
 
     if (currentPedidoId) {
@@ -199,22 +219,18 @@
     } else {
       try {
         const raw = localStorage.getItem('rockyprint:caja:last');
-        if (raw) { Object.assign(state, JSON.parse(raw)); }
-        else {
+        if (raw) {
+          Object.assign(state, JSON.parse(raw));
+          // >>> MODIFICADO: Siempre iniciar cliente EN BLANCO
+          state.clienteId = null;
+          state.cliente = { nombre: "", tel: "", email: "", rfc: "", factura: "no", canal: "Mostrador" };
+        } else {
           state.folio = genFolio();
           state.fechaHora = new Date().toLocaleString('es-MX');
           state.items = [newItem()];
-
-          // Si hay último cliente usado, lo pre-carga
-          const lastId = Number(localStorage.getItem('rp:lastClientId') || 0);
-          if (lastId) {
-            const cli = await window.api.clientes.get(lastId).catch(() => null);
-            if (cli && !state.cliente.nombre && !state.cliente.tel && !state.cliente.email) {
-              fillFromCliente(cli);
-            }
-          }
         }
-      } catch {}
+        // >>> MODIFICADO: NO precargar rp:lastClientId al entrar
+      } catch { }
     }
 
     $('#folio').value = state.folio;
@@ -236,6 +252,9 @@
     $('#anticipo').value = state.totales.anticipo;
     $('#metodo').value = state.totales.metodo;
 
+    // Asegurar que el botón "Quitar selección" arranque oculto
+    if (cliClearBtn) cliClearBtn.style.display = 'none';
+
     renderItems();
     recalc();
     wireEvents();
@@ -253,30 +272,30 @@
         }
         localStorage.removeItem('rp:preview');
       }
-    } catch {}
+    } catch { }
   }
 
   async function loadPedidoFromDB(id) {
     const data = await window.api.orders.get(id);
     if (!data) return;
 
-    state.folio  = data.pedido.folio;
+    state.folio = data.pedido.folio;
     state.estado = data.pedido.estado;
 
     state.cliente = {
       nombre: data.cliente?.nombre || '',
-      tel:    data.cliente?.telefono || '',
-      email:  data.cliente?.correo || '',
-      rfc:    data.cliente?.rfc || '',
-      factura:(data.cliente?.facturar ? 'si' : 'no'),
-      canal:  data.cliente?.canal || 'Mostrador'
+      tel: data.cliente?.telefono || '',
+      email: data.cliente?.correo || '',
+      rfc: data.cliente?.rfc || '',
+      factura: (data.cliente?.facturar ? 'si' : 'no'),
+      canal: data.cliente?.canal || 'Mostrador'
     };
 
     state.pedido = {
       entregaFecha: data.pedido.fecha_entrega || '',
-      entregaHora:  data.pedido.hora_entrega  || '',
-      prioridad:    data.pedido.prioridad     || 'Normal',
-      sucursal:     data.pedido.sucursal_usuario || ''
+      entregaHora: data.pedido.hora_entrega || '',
+      prioridad: data.pedido.prioridad || 'Normal',
+      sucursal: data.pedido.sucursal_usuario || ''
     };
 
     state.items = (data.partidas || []).map(p => ({
@@ -285,8 +304,8 @@
       producto: p.producto || '',
       desc: p.descripcion || '',
       ancho: Number(p.ancho_cm || 0),
-      alto:  Number(p.alto_cm  || 0),
-      cant:  Number(p.cantidad || 1),
+      alto: Number(p.alto_cm || 0),
+      cant: Number(p.cantidad || 1),
       color: p.info_color || '',
       acabados: p.acabados || '',
       pu: Number(p.precio_unitario || 0),
@@ -294,7 +313,7 @@
     }));
 
     state.totales.anticipo = Number(data.pedido.anticipo_monto || 0);
-    state.totales.metodo   = data.pedido.metodo_pago || 'Efectivo';
+    state.totales.metodo = data.pedido.metodo_pago || 'Efectivo';
 
     try {
       const previews = await window.api.design.listByPedido(id);
@@ -309,7 +328,7 @@
           }, 0);
         });
       }
-    } catch {}
+    } catch { }
   }
 
   function injectPreview(card, dataUrl) {
@@ -325,8 +344,8 @@
 
   function newItem(partial = {}) {
     return Object.assign({
-      id: crypto.randomUUID(), // id UI
-      dbId: null,              // id en BD (nulo si aún no existe)
+      id: crypto.randomUUID(),
+      dbId: null,
       producto: "", desc: "", ancho: 0, alto: 0, cant: 1,
       color: "", acabados: "", pu: 0, selected: false
     }, partial);
@@ -376,13 +395,13 @@
     $('.i-sel', card).addEventListener('change', e => { it.selected = !!e.target.checked; saveLocal(); });
 
     $('.i-ancho', card).addEventListener('input', e => { it.ancho = +e.target.value || 0; recalc(); });
-    $('.i-alto', card).addEventListener('input', e => { it.alto  = +e.target.value || 0; recalc(); });
-    $('.i-cant', card).addEventListener('input', e => { it.cant  = clamp(e.target.value, 1, 1e9); recalc(); });
+    $('.i-alto', card).addEventListener('input', e => { it.alto = +e.target.value || 0; recalc(); });
+    $('.i-cant', card).addEventListener('input', e => { it.cant = clamp(e.target.value, 1, 1e9); recalc(); });
     $('.i-color', card).addEventListener('input', e => { it.color = e.target.value; saveLocal(); });
     $('.i-acab', card).addEventListener('input', e => { it.acabados = e.target.value; saveLocal(); });
-    $('.i-pu', card).addEventListener('input', e => { it.pu    = +e.target.value || 0; recalc(); });
+    $('.i-pu', card).addEventListener('input', e => { it.pu = +e.target.value || 0; recalc(); });
 
-    $('.i-lienzo',  card).addEventListener('click', () => openLienzoForItem(idx));
+    $('.i-lienzo', card).addEventListener('click', () => openLienzoForItem(idx));
     $('.i-preview', card).addEventListener('click', () => showPreviewForItem(idx, card));
   }
 
@@ -391,15 +410,15 @@
   function attachCardDrag(card) {
     const handle = $('.handle', card); handle.setAttribute('draggable', 'true');
     handle.addEventListener('dragstart', (e) => { dragId = card.dataset.id; card.classList.add('row-dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragId); });
-    handle.addEventListener('dragend',   () => { card.classList.remove('row-dragging'); dragId = null; });
+    handle.addEventListener('dragend', () => { card.classList.remove('row-dragging'); dragId = null; });
     card.addEventListener('dragenter', (e) => { e.preventDefault(); if (card.dataset.id !== dragId) card.classList.add('row-over'); });
-    card.addEventListener('dragover',  (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+    card.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
     card.addEventListener('dragleave', () => card.classList.remove('row-over'));
-    card.addEventListener('drop',      () => { card.classList.remove('row-over'); if (!dragId || card.dataset.id === dragId) return; moveBefore(dragId, card.dataset.id); renderItems(); recalc(); });
+    card.addEventListener('drop', () => { card.classList.remove('row-over'); if (!dragId || card.dataset.id === dragId) return; moveBefore(dragId, card.dataset.id); renderItems(); recalc(); });
   }
   function moveBefore(sourceId, targetId) {
     const from = state.items.findIndex(x => x.id === sourceId);
-    const to   = state.items.findIndex(x => x.id === targetId);
+    const to = state.items.findIndex(x => x.id === targetId);
     if (from === -1 || to === -1 || from === to) return;
     const [item] = state.items.splice(from, 1); state.items.splice(to, 0, item); saveLocal();
   }
@@ -419,10 +438,10 @@
     const saldo = total - anticipo;
 
     $('#anticipo').value = anticipo;
-    $('#rTotal').textContent   = fmtMoney(total);
-    $('#rTotal2').textContent  = fmtMoney(total);
-    $('#rAnticipo').textContent= fmtMoney(anticipo);
-    $('#rSaldo').textContent   = fmtMoney(saldo);
+    $('#rTotal').textContent = fmtMoney(total);
+    $('#rTotal2').textContent = fmtMoney(total);
+    $('#rAnticipo').textContent = fmtMoney(anticipo);
+    $('#rSaldo').textContent = fmtMoney(saldo);
 
     state.totales.anticipo = anticipo;
     saveLocal();
@@ -439,7 +458,7 @@
         const part = data?.partidas?.[index];
         if (part) partidaId = String(part.id);
       }
-    } catch {}
+    } catch { }
 
     await window.api.ui.setContext({ pedidoId: String(pedidoId), partidaId, partidaIndex: index });
     await window.api.navigate('lienzo.html');
@@ -455,7 +474,7 @@
           injectPreview(card, prev.dataUrl);
           return;
         }
-      } catch {}
+      } catch { }
     }
 
     const maybePartId = state.items[index]?.dbId ? Number(state.items[index].dbId) : null;
@@ -498,25 +517,25 @@
     $('#estado').addEventListener('change', e => { state.estado = e.target.value; saveLocal(); });
 
     $('#cliNombre').addEventListener('input', e => { state.cliente.nombre = e.target.value; saveLocal(); });
-    $('#cliTel').addEventListener('input',    e => { state.cliente.tel    = e.target.value; saveLocal(); });
-    $('#cliEmail').addEventListener('input',  e => { state.cliente.email  = e.target.value; saveLocal(); });
-    $('#cliRFC').addEventListener('input',    e => { state.cliente.rfc    = e.target.value; saveLocal(); });
-    $('#factura').addEventListener('change',  e => { state.cliente.factura = e.target.value; saveLocal(); });
-    $('#canal').addEventListener('change',    e => { state.cliente.canal   = e.target.value; saveLocal(); });
+    $('#cliTel').addEventListener('input', e => { state.cliente.tel = e.target.value; saveLocal(); });
+    $('#cliEmail').addEventListener('input', e => { state.cliente.email = e.target.value; saveLocal(); });
+    $('#cliRFC').addEventListener('input', e => { state.cliente.rfc = e.target.value; saveLocal(); });
+    $('#factura').addEventListener('change', e => { state.cliente.factura = e.target.value; saveLocal(); });
+    $('#canal').addEventListener('change', e => { state.cliente.canal = e.target.value; saveLocal(); });
 
     $('#entregaFecha').addEventListener('change', e => { state.pedido.entregaFecha = e.target.value; saveLocal(); });
-    $('#entregaHora').addEventListener('change',  e => { state.pedido.entregaHora  = e.target.value; saveLocal(); });
-    $('#prioridad').addEventListener('change',    e => { state.pedido.prioridad    = e.target.value; saveLocal(); });
-    $('#sucursal').addEventListener('input',      e => { state.pedido.sucursal     = e.target.value; saveLocal(); });
+    $('#entregaHora').addEventListener('change', e => { state.pedido.entregaHora = e.target.value; saveLocal(); });
+    $('#prioridad').addEventListener('change', e => { state.pedido.prioridad = e.target.value; saveLocal(); });
+    $('#sucursal').addEventListener('input', e => { state.pedido.sucursal = e.target.value; saveLocal(); });
 
     $$('.chip.quick').forEach(ch => {
       ch.addEventListener('click', () => {
         const kind = ch.dataset.tpl;
         const presets = {
-          'Tarjetas':    { producto: 'Tarjetas de presentación', desc: 'Couché 300g, 9x5 cm', cant: 100, pu: 350 },
-          'Lona':        { producto: 'Lona publicitaria', desc: 'Gran formato', ancho: 300, alto: 200, cant: 1, pu: 250 },
-          'Playera':     { producto: 'Playera personalizada', desc: 'Serigrafía 1 tinta', cant: 1, pu: 120 },
-          'Vinil':       { producto: 'Vinil recorte', desc: 'Rotulación', cant: 1, pu: 180 },
+          'Tarjetas': { producto: 'Tarjetas de presentación', desc: 'Couché 300g, 9x5 cm', cant: 100, pu: 350 },
+          'Lona': { producto: 'Lona publicitaria', desc: 'Gran formato', ancho: 300, alto: 200, cant: 1, pu: 250 },
+          'Playera': { producto: 'Playera personalizada', desc: 'Serigrafía 1 tinta', cant: 1, pu: 120 },
+          'Vinil': { producto: 'Vinil recorte', desc: 'Rotulación', cant: 1, pu: 180 },
           'Sublimación': { producto: 'Taza sublimada', desc: 'Full color', cant: 1, pu: 90 },
         };
         state.items.push(newItem(presets[kind] || {}));
@@ -538,7 +557,7 @@
           currentPedidoId = Number(pid) || 0;
           toast('Finalizado', 'Pedido guardado y formulario reiniciado.');
           resetForm();
-          try { await window.api.ui.clearContext(); } catch {}
+          try { await window.api.ui.clearContext(); } catch { }
         } catch (err) {
           alert(err?.message || 'No se pudo finalizar el pedido.');
         }
@@ -548,8 +567,8 @@
     document.addEventListener('keydown', (e) => {
       if (e.ctrlKey && e.key.toLowerCase() === 's') { e.preventDefault(); guardarYToast(); }
       if (e.ctrlKey && e.key.toLowerCase() === 'p') { e.preventDefault(); printOrder(); }
-      if (e.key === 'Insert')  { e.preventDefault(); $('#btnAddItem').click(); }
-      if (e.key === 'Delete')  { e.preventDefault(); $('#btnDelItem').click(); }
+      if (e.key === 'Insert') { e.preventDefault(); $('#btnAddItem').click(); }
+      if (e.key === 'Delete') { e.preventDefault(); $('#btnDelItem').click(); }
       if (e.altKey && e.key.toLowerCase() === 'n') { e.preventDefault(); resetForm(); }
     });
   }
@@ -572,22 +591,27 @@
     $('#factura').value = 'no'; $('#canal').value = 'Mostrador'; $('#entregaFecha').value = ''; $('#entregaHora').value = '';
     $('#prioridad').value = 'Normal'; $('#sucursal').value = ''; $('#anticipo').value = 0; $('#metodo').value = 'Efectivo';
 
-    // Re-carga último cliente si existe
+    // (Conservamos comportamiento: opcionalmente puedes quitar este bloque si tampoco quieres precargar en "Nuevo")
     try {
       const lastId = Number(localStorage.getItem('rp:lastClientId') || 0);
-      if (lastId) window.api.clientes.get(lastId).then(cli => { if (cli) fillFromCliente(cli); });
-    } catch {}
+      if (lastId) window.api.clientes.get(lastId).then(cli => { /* si no quieres precargar aquí, comenta la línea siguiente */
+        // fillFromCliente(cli);
+      });
+    } catch { }
+
+    // Asegurar botón oculto tras limpiar
+    if (cliClearBtn) cliClearBtn.style.display = 'none';
 
     toast('Nuevo', 'Pedido reiniciado.');
     saveLocal();
     history.replaceState(null, '', location.pathname); // quita ?pedidoId
-    try { localStorage.removeItem('rp:preview'); } catch {}
+    try { localStorage.removeItem('rp:preview'); } catch { }
   }
 
-  function saveLocal() { try { localStorage.setItem('rockyprint:caja:last', JSON.stringify(state)); } catch {} }
+  function saveLocal() { try { localStorage.setItem('rockyprint:caja:last', JSON.stringify(state)); } catch { } }
   function guardarYToast() {
     guardarEnDB().then(() => toast('Guardado', 'Pedido guardado en base de datos.'))
-                 .catch(err => alert(err?.message || 'Error al guardar.'));
+      .catch(err => alert(err?.message || 'Error al guardar.'));
   }
 
   // create o update según exista currentPedidoId
@@ -613,13 +637,13 @@
         canal: toNull($('#canal').value)
       },
       items: state.items.map(it => ({
-        id:  (it.dbId ?? null),
+        id: (it.dbId ?? null),
         cid: it.id,
         producto: toNull(it.producto),
         desc: toNull(it.desc),
         ancho: Number(it.ancho || 0),
-        alto:  Number(it.alto  || 0),
-        cant:  Number(it.cant  || 1),
+        alto: Number(it.alto || 0),
+        cant: Number(it.cant || 1),
         color: toNull(it.color),
         acabados: toNull(it.acabados),
         pu: Number(it.pu || 0)
@@ -730,11 +754,21 @@
   const btnLogout = document.getElementById('btnLogout');
   if (btnLogout) {
     btnLogout.addEventListener('click', async () => {
-      try { await window.api.auth.logout(); } catch {}
-      try { await window.api.ui.clearContext(); } catch {}
-      try { localStorage.removeItem('rockyprint:caja:last'); } catch {}
-      try { localStorage.removeItem('rp:preview'); } catch {}
-      await window.api.navigate('login.html');
+      try { await window.api.auth.logout(); } catch { }
+      try { await window.api.ui.clearContext(); } catch { }
+      try { localStorage.removeItem('rockyprint:caja:last'); } catch { }
+      try { localStorage.removeItem('rp:preview'); } catch { }
+
+      try { document.activeElement?.blur?.(); } catch { }
+      try { window.getSelection?.()?.removeAllRanges?.(); } catch { }
+      try {
+        const ev = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+        document.body.dispatchEvent(ev);
+      } catch { }
+
+      setTimeout(async () => {
+        await window.api.navigate('login.html');
+      }, 0);
     });
   }
 

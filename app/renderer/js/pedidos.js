@@ -1,4 +1,3 @@
-// app/renderer/js/pedidos.js
 (async () => {
   const $ = (q) => document.querySelector(q);
   const $$ = (q) => Array.from(document.querySelectorAll(q));
@@ -16,36 +15,32 @@
       return;
     }
 
-    // permisos por acción
-    window.__canEditCaja = (rol === 'caja' || rol === 'admin');                // editar en Caja
-    window.__canDelete = ['caja', 'admin', 'produccion'].includes(rol);        // borrar con contraseña
-
-    // debug opcional
-    // console.log('[pedidos] rol=', rol, 'canEditCaja=', window.__canEditCaja, 'canDelete=', window.__canDelete);
+    window.__canEditCaja = (rol === 'caja' || rol === 'admin');
+    window.__canDelete = ['caja', 'admin', 'produccion'].includes(rol);
   } catch {
     await window.api.navigate('login.html');
     return;
   }
 
-  // Filtros UI
+  // === Filtros UI
   const qEl = $('#q');
   const estEl = $('#estado');
   const desdeEl = $('#desde');
   const hastaEl = $('#hasta');
 
-  // KPIs
+  // === KPIs
   const kTotal = $('#kpiTotal');
-  const kProg = $('#kpiProg');
-  const kLate = $('#kpiLate');
-  const kDone30 = $('#kpiDone30');
+  const kProg  = $('#kpiProg');
+  const kLate  = $('#kpiLate');
+  const kDone30= $('#kpiDone30');
 
-  // Modal detalle
+  // === Modal detalle
   const modal = $('#orderModal');
   const mClose = $('#mClose');
   const mBody = $('#mBody');
   const mFolio = $('#mFolio');
 
-  // Lightbox
+  // === Lightbox
   const lb = {
     root: document.getElementById('previewLightbox'),
     img: document.getElementById('lbImg'),
@@ -83,22 +78,24 @@
     closeLightbox();
   });
 
-  // Estado en memoria
+  // === Estado
   let pedidos = [];
 
-  // Utils
+  // === Helpers
+  const isPinned = (p) => p?.pinned === true;
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('es-MX') : '-';
-  const fmtDT = (d) => d ? new Date(d).toLocaleString('es-MX') : '-';
-  const fmtMoney = (v) => (new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })).format(+v || 0);
+  const fmtDT   = (d) => d ? new Date(d).toLocaleString('es-MX') : '-';
+  const fmtMoney= (v) => (new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })).format(+v || 0);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
-  const isLate = (d) => {
+  const isLate = (d, estado) => {
     if (!d) return false;
     const T = new Date(); T.setHours(0, 0, 0, 0);
     const D = new Date(d); D.setHours(0, 0, 0, 0);
-    return D < T;
+    const closed = new Set(['Listo', 'Entregado', 'Cancelado']);
+    return D < T && !closed.has(String(estado || ''));
   };
 
-  // Cargar lista
+  // === Cargar lista
   async function loadData() {
     const filters = {
       q: qEl.value.trim() || null,
@@ -112,10 +109,10 @@
 
   function renderKPIs() {
     const total = pedidos.length;
-    const prog = pedidos.filter(x => x.estado === "En progreso").length;
-    const late = pedidos.filter(x => isLate(x.fecha_entrega) && x.estado !== "Listo").length;
+    const prog = pedidos.filter(x => ['En progreso', 'En producción'].includes(String(x.estado))).length;
+    const late = pedidos.filter(x => isLate(x.fecha_entrega, x.estado)).length;
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 30);
-    const done30 = pedidos.filter(x => x.estado === "Listo" && x.actualizado_en && new Date(x.actualizado_en) >= cutoff).length;
+    const done30 = pedidos.filter(x => String(x.estado) === 'Listo' && x.actualizado_en && new Date(x.actualizado_en) >= cutoff).length;
 
     kTotal.textContent = total;
     kProg.textContent = prog;
@@ -123,17 +120,98 @@
     kDone30.textContent = done30;
   }
 
+  // ====== Drag & Drop (reordenar por grupo) ======
+  let dragId = null;
+
+  function attachCardDnD(card) {
+    const handle = card.querySelector('.handle');
+    if (!handle) return;
+
+    handle.setAttribute('draggable', 'true');
+    handle.addEventListener('dragstart', (e) => {
+      dragId = card.dataset.id;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragId);
+    });
+    handle.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      dragId = null;
+    });
+
+    card.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      if (!dragId || card.dataset.id === dragId) return;
+      const dragging = pedidos.find(x => String(x.id) === String(dragId));
+      const target   = pedidos.find(x => String(x.id) === String(card.dataset.id));
+      if (!dragging || !target) return;
+      if (isPinned(dragging) !== isPinned(target)) return; // no permitir mezclar grupos
+      card.classList.add('drag-over');
+    });
+    card.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    });
+    card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+    card.addEventListener('drop', () => {
+      card.classList.remove('drag-over');
+      if (!dragId || card.dataset.id === dragId) return;
+
+      const dragging = pedidos.find(x => String(x.id) === String(dragId));
+      const target   = pedidos.find(x => String(x.id) === String(card.dataset.id));
+      if (!dragging || !target) return;
+      if (isPinned(dragging) !== isPinned(target)) return; // no mezclar
+
+      moveBefore(dragId, card.dataset.id);
+      render();             // repinta con nuevo orden
+      persistOrderDebounced(); // guarda en DB
+    });
+  }
+
+  function moveBefore(sourceId, targetId) {
+    const from = pedidos.findIndex(x => String(x.id) === String(sourceId));
+    const to   = pedidos.findIndex(x => String(x.id) === String(targetId));
+    if (from === -1 || to === -1 || from === to) return;
+    const [item] = pedidos.splice(from, 1);
+    pedidos.splice(to, 0, item);
+  }
+
+  // Persistencia del orden por grupo (debounce)
+  let persistT = null;
+  function persistOrderDebounced() {
+    clearTimeout(persistT);
+    persistT = setTimeout(persistOrder, 400);
+  }
+
+  async function persistOrder() {
+    try {
+      const pinnedIds = pedidos.filter(isPinned).map(p => Number(p.id));
+      const normalIds = pedidos.filter(p => !isPinned(p)).map(p => Number(p.id));
+
+      if (pinnedIds.length) await window.api.orders.setPinnedOrder(pinnedIds);
+      if (normalIds.length) await window.api.orders.setOrder(normalIds);
+    } catch (e) {
+      console.error('No se pudo guardar el orden:', e);
+    }
+  }
+
+  // ====== Render tarjetas ======
   function render() {
     const grid = $('#grid');
     grid.innerHTML = '';
+
     pedidos.forEach(p => {
       const card = document.createElement('article');
-      card.className = 'card';
+      card.className = 'card' + (isPinned(p) ? ' pinned' : '');
       card.dataset.id = p.id;
 
       const entrega = fmtDate(p.fecha_entrega);
       const actualizado = fmtDT(p.actualizado_en);
       const totalFmt = fmtMoney(p.total);
+
+      const pinBtn   = isPinned(p) ? '📌' : '📍';
+      const pinTitle = isPinned(p) ? 'Quitar fijado' : 'Fijar arriba';
+      const pinPill  = isPinned(p) ? `<span class="pill s-pin">📌 Fijado</span>` : '';
 
       card.innerHTML = `
         <div class="card-head">
@@ -142,37 +220,47 @@
             <span class="pill"># ${p.folio}</span>
             <span class="pill">${p.estado}</span>
             <span class="pill">Cliente: <b>${esc(p.cliente || '-')}</b></span>
+            ${pinPill}
           </div>
         </div>
 
         <div>
           <div class="meta">
-            Entrega: <b${isLate(p.fecha_entrega) ? ' class="late"' : ''}>${entrega}</b> ·
+            Entrega: <b${isLate(p.fecha_entrega, p.estado) ? ' class="late"' : ''}>${entrega}</b> ·
             Actualizado: <b>${actualizado}</b> ·
             Total: <b>${totalFmt}</b>
           </div>
         </div>
 
         <div class="tools">
+          <button class="iconbtn" data-pin title="${pinTitle}">${pinBtn}</button>
           <button class="iconbtn" data-ver title="Ver / abrir">👁️</button>
           ${window.__canEditCaja ? '<button class="iconbtn" data-editar title="Editar en Caja">✏️</button>' : ''}
           ${window.__canDelete ? '<button class="iconbtn danger" data-borrar title="Eliminar pedido">🗑️</button>' : ''}
         </div>
       `;
 
-      // 👁️ → abre modal de detalle
+      // Pin / Unpin
+      card.querySelector('[data-pin]')?.addEventListener('click', async () => {
+        const pin = !isPinned(p);
+        const res = await window.api.orders.togglePin({ id: p.id, pin }).catch(() => ({ ok: false }));
+        if (!res?.ok) { alert(res?.error || 'No se pudo cambiar el pin'); return; }
+        await loadData();
+      });
+
+      // Ver / Editar / Borrar
       card.querySelector('[data-ver]')?.addEventListener('click', async () => openOrderModal(p.id));
-      // ✏️ → ir a Caja
       card.querySelector('[data-editar]')?.addEventListener('click', async () => {
         await window.api.navigate({ html: 'caja.html', ctx: { pedidoId: String(p.id) } });
       });
-      // 🗑️ → borrar con contraseña
       card.querySelector('[data-borrar]')?.addEventListener('click', async () => {
         await deleteOrderWithPassword(p.id, p.folio);
       });
 
+      attachCardDnD(card);
       grid.appendChild(card);
     });
+
     renderKPIs();
   }
 
@@ -194,6 +282,7 @@
             <div class="m-row"><span>Entrega</span><b>${esc(data.pedido.fecha_entrega || '-')} ${esc(data.pedido.hora_entrega || '')}</b></div>
             <div class="m-row"><span>Prioridad</span><b>${esc(data.pedido.prioridad || 'Normal')}</b></div>
             <div class="m-row"><span>Última actualización</span><b>${fmtDT(data.pedido.actualizado_en)}</b></div>
+            <div class="m-row"><span>Fijado</span><b>${data.pedido.pinned ? 'Sí' : 'No'}</b></div>
           </div>
           <div class="m-card">
             <h4>Cliente</h4>
@@ -299,7 +388,7 @@
   modal.querySelector('.modal-backdrop')?.addEventListener('click', closeModal);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !lbCtx) closeModal(); });
 
-  // Eventos filtros
+  // === Eventos filtros
   $('#filtrarBtn').addEventListener('click', loadData);
   [qEl, estEl, desdeEl, hastaEl].forEach(el => {
     el.addEventListener(el === qEl ? 'input' : 'change', () => {
@@ -307,11 +396,11 @@
     });
   });
 
-  // Export CSV
+  // === Export CSV
   $('#exportCsvBtn')?.addEventListener('click', () => exportCSV(pedidos));
   function exportCSV(data) {
     if (!data.length) { alert('No hay datos para exportar.'); return; }
-    const headers = ['id', 'folio', 'cliente', 'estado', 'fecha_entrega', 'actualizado_en', 'total'];
+    const headers = ['id', 'folio', 'cliente', 'estado', 'fecha_entrega', 'actualizado_en', 'total', 'pinned'];
     const rows = data.map(p => ([
       p.id,
       safe(p.folio),
@@ -319,7 +408,8 @@
       safe(p.estado),
       p.fecha_entrega ? new Date(p.fecha_entrega).toISOString().split('T')[0] : '',
       p.actualizado_en ? new Date(p.actualizado_en).toISOString() : '',
-      Number(p.total || 0)
+      Number(p.total || 0),
+      p.pinned === true ? 1 : 0
     ]));
     const csv = [headers.join(','), ...rows.map(r => r.map(csvEscape).join(','))].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -333,6 +423,7 @@
     return (/[,\"\n]/.test(s)) ? `"${s.replace(/"/g, '""')}"` : s;
   };
 
+  // ===== Confirmación por contraseña (borrado)
   function askPassword(message = 'Escribe tu contraseña para continuar') {
     const root = document.getElementById('pwdModal');
     const msgEl = document.getElementById('pwdMsg');
@@ -373,24 +464,19 @@
       root.querySelector('.modal-backdrop')?.addEventListener('click', onCancel);
       document.addEventListener('keydown', onKey);
 
-      // Forzar foco de forma robusta tras pintar el modal
       const focusInput = () => { inEl.focus({ preventScroll: true }); inEl.select(); };
       requestAnimationFrame(() => requestAnimationFrame(focusInput));
     });
   }
 
-
-  // ======== Borrar pedido con password del usuario ========
-  // Borrar pedido con password del usuario
   async function deleteOrderWithPassword(pedidoId, folio) {
     if (window.__canDelete !== true) {
       alert('No tienes permisos para borrar.');
       return;
     }
 
-    // SIN confirm() nativo: el propio modal hace de confirmación
     const pwd = await askPassword(`Para eliminar el pedido #${folio}, escribe tu contraseña.`);
-    if (pwd == null) return; // cancelado
+    if (pwd == null) return;
 
     const check = await window.api.auth.confirmPassword(pwd).catch(() => ({ ok: false }));
     if (!check?.ok) { alert(check?.error || 'Contraseña incorrecta.'); return; }
@@ -398,16 +484,15 @@
     const res = await window.api.orders.delete(pedidoId).catch(() => ({ ok: false }));
     if (res?.ok) {
       alert('Pedido eliminado.');
-      try { closeLightbox(); } catch { }
-      try { closeModal(); } catch { }
+      try { closeLightbox(); } catch {}
+      try { closeModal(); } catch {}
       await loadData();
     } else {
       alert(res?.error || 'No se pudo eliminar el pedido.');
     }
   }
 
-
-  // Logout
+  // === Logout
   document.getElementById('btnLogout')?.addEventListener('click', async () => {
     try {
       await window.api.auth.logout();

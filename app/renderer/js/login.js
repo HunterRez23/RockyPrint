@@ -13,6 +13,29 @@
 
   let busy = false;
 
+  // ====== Foco robusto para el login ======
+  function focusFirst() {
+    const first = userEl || document.querySelector('input[autofocus]') || document.querySelector('input,select,button');
+    if (first) { try { first.focus(); first.select?.(); } catch {} }
+  }
+  function reinforceFocus() {
+    focusFirst();
+    setTimeout(focusFirst, 0);
+    setTimeout(focusFirst, 50);
+  }
+  window.addEventListener('DOMContentLoaded', reinforceFocus);
+  window.addEventListener('focus', () => setTimeout(focusFirst, 0));
+
+  // Enter en usuario → pasa a contraseña
+  userEl?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); passEl?.focus(); }
+  });
+
+  // Limpiar error al escribir
+  [userEl, passEl]?.forEach?.((el) => {
+    el?.addEventListener('input', () => { errEl && (errEl.textContent = ''); });
+  });
+
   // Mapear área a valores válidos
   const normArea = (v) => {
     const x = String(v || '').trim().toLowerCase();
@@ -32,6 +55,8 @@
       // sesión inválida → logout silencioso
       if (current) await window.api.auth.logout();
     } catch { /* ignore */ }
+    // asegurar foco si nos quedamos en login
+    reinforceFocus();
   })();
 
   form.addEventListener('submit', async (e) => {
@@ -45,6 +70,7 @@
 
     if (!usuario || !clave) {
       showError('Escribe usuario y contraseña.');
+      reinforceFocus();
       return;
     }
 
@@ -73,6 +99,7 @@
     } catch (err) {
       console.error('[login] error:', err);
       showError('No se pudo iniciar sesión.');
+      reinforceFocus();
     } finally {
       setBusy(false);
     }
@@ -85,8 +112,12 @@
     window.api.navigate(target);
   }
 
-  function showError(msg){ if (errEl) errEl.textContent = msg; }
-  function clearError(){ if (errEl) errEl.textContent = ''; }
+  function showError(msg){
+    if (errEl) errEl.textContent = msg;
+  }
+  function clearError(){
+    if (errEl) errEl.textContent = '';
+  }
   function setBusy(flag){
     busy = !!flag;
     if (submitBtn) submitBtn.disabled = busy;

@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Pedidos — Tarjetas en grilla</title>
-  <!-- Hoja de estilos principal de esta pantalla -->
   <link rel="stylesheet" href="css/pedidos.css">
 </head>
 <body>
@@ -32,8 +31,12 @@
         <select id="estado">
           <option value="">Todos</option>
           <option>Pendiente</option>
-          <option>En progreso</option>
+          <option>En revisión</option>
+          <option>En producción</option>
           <option>Listo</option>
+          <option>Entregado</option>
+          <option>Cancelado</option>
+          <option>En progreso</option>
           <option>En pausa</option>
         </select>
       </div>
@@ -76,7 +79,8 @@
     </section>
 
     <p class="note">
-      💡 Arrastra una tarjeta usando el asa <b class="handle demo">⋮⋮</b> para cambiar el orden (prioridad visual).
+      💡 Usa el botón <b>📍</b> para <b>fijar</b> un pedido (se vuelve 📌 y siempre queda arriba).<br/>
+      Arrastra con el asa <b class="handle demo">⋮⋮</b> para cambiar el orden dentro de su grupo (fijados o normales).<br/>
       Las entregas en <b class="late">rojo</b> están atrasadas.
     </p>
   </main>
@@ -101,14 +105,13 @@
     <figure class="lb-card">
       <img id="lbImg" alt="Preview a tamaño completo" />
       <div class="lb-tools">
-        <!-- Botón opcional para abrir lienzo a partir del preview (si lo usas en JS) -->
         <!-- <button class="btn" id="lbOpenLienzo">Abrir en Lienzo</button> -->
         <button class="btn" id="lbClose">Cerrar</button>
       </div>
     </figure>
   </div>
 
-  <!-- ===== Modal de contraseña (para confirmar borrado) ===== -->
+  <!-- ===== Modal de contraseña (confirmar borrado) ===== -->
   <div id="pwdModal" class="modal hidden" aria-hidden="true">
     <div class="modal-backdrop"></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pwdTitle" tabindex="-1">
@@ -119,7 +122,6 @@
       <section class="modal-body">
         <p id="pwdMsg" style="margin-bottom:10px"></p>
         <label for="pwdInput">Contraseña</label>
-        <!-- Sin autofocus; el JS hace focus() al abrir -->
         <input type="password" id="pwdInput" placeholder="Tu contraseña" />
         <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end">
           <button class="btn" id="pwdCancel">Cancelar</button>

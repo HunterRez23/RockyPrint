@@ -1,14 +1,15 @@
 {
   "name": "rockyprint",
   "version": "1.0.0",
+  "description": "Gestión de pedidos para imprenta",
+  "author": "Tu Nombre",
   "main": "app/main/main.js",
   "type": "module",
   "scripts": {
     "start": "electron .",
     "dev": "cross-env NODE_ENV=development electron .",
     "build": "electron-builder",
-    "db:up": "psql \"$PG_URL\" -f sql/001_init.sql",
-    "db:seed": "psql \"$PG_URL\" -f sql/002_seed.sql"
+    "build:win": "electron-builder --win nsis"
   },
   "dependencies": {
     "dotenv": "^16.6.1",
@@ -23,36 +24,30 @@
   "build": {
     "appId": "com.rockyprint.app",
     "asar": true,
-    "directories": {
-      "buildResources": "build"
-    },
+    "directories": { "buildResources": "build" },
     "files": [
       "app/**/*",
       "public/**/*",
       "package.json"
     ],
     "extraResources": [
-      {
-        "from": "sql",
-        "to": "sql",
-        "filter": ["**/*"]
-      },
-      {
-        "from": "assets",
-        "to": "assets",
-        "filter": ["**/*"]
-      }
+      { "from": "sql", "to": "sql", "filter": ["**/*"] },
+      { "from": "assets", "to": "assets", "filter": ["**/*"] },
+      { "from": ".", "to": ".", "filter": [".env"] }
     ],
-    "mac": {
-      "category": "public.app-category.productivity"
-    },
     "win": {
       "target": "nsis",
-      "icon": "build/icon.ico"
+      "icon": "build/RockyPrint.ico"
     },
-    "linux": {
-      "target": "AppImage",
-      "category": "Utility"
-    }
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "RockyPrint"
+    },
+    "mac": { "category": "public.app-category.productivity" },
+    "linux": { "target": "AppImage", "category": "Utility" }
   }
 }

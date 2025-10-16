@@ -242,3 +242,6 @@ input,select{
   border:1px solid var(--border); background:#fff; border-radius:8px; padding:6px 8px; cursor:pointer
 }
 #pwdModal .iconbtn:hover{box-shadow:0 2px 8px rgba(0,0,0,.08)}
+
+.card.pinned { border-color:#f59e0b; box-shadow:0 10px 28px rgba(245,158,11,.15); }
+.pill.s-pin { background:#fff7ed; color:#b45309; border-color:#fed7aa; }

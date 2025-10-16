@@ -1,4 +1,3 @@
-// app/main/ipc-handlers.js
 import { ipcMain, BrowserWindow } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,6 +67,31 @@ ipcMain.handle('ui:navigate', async (_evt, htmlOrObj, ctxArg) => {
   const allowedFiles = new Set(['login.html', 'caja.html', 'lienzo.html', 'pedidos.html']);
   if (!allowedFiles.has(requested)) return { ok: false, error: 'Archivo no permitido' };
 
+  const forceWindowFocus = async (targetIsLogin = false) => {
+    try {
+      win.setFocusable(true);
+      if (process.platform === 'win32') {
+        win.setAlwaysOnTop(true, 'screen-saver');
+      }
+      win.show();
+      win.focus();
+      win.webContents.focus();
+      if (targetIsLogin) {
+        setTimeout(() => {
+          try {
+            win.webContents.executeJavaScript(`
+              (function(){
+                const el = document.getElementById('usuario') || document.querySelector('input[autofocus]') || document.querySelector('input');
+                if (el) { el.focus(); el.select && el.select(); }
+              })();
+            `, true);
+          } catch {}
+        }, 0);
+      }
+    } catch {}
+    setTimeout(() => { try { if (process.platform === 'win32') win.setAlwaysOnTop(false); } catch {} }, 150);
+  };
+
   if (requested !== 'login.html') {
     const user = store.get('user');
     if (!user || !user.rol) return { ok: false, error: 'Sesión requerida' };
@@ -84,17 +108,52 @@ ipcMain.handle('ui:navigate', async (_evt, htmlOrObj, ctxArg) => {
 
     if (payload.ctx) store.set('ui:ctx', payload.ctx);
 
-    try { await win.loadFile(rendererPath(target)); return { ok: true }; }
-    catch (err) { return { ok: false, error: String(err) }; }
+    try {
+      await win.loadFile(rendererPath(target));
+      await forceWindowFocus(false);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
   } else {
     store.delete('ui:ctx');
-    try { await win.loadFile(rendererPath('login.html')); return { ok: true }; }
-    catch (err) { return { ok: false, error: String(err) }; }
+    try {
+      await win.loadFile(rendererPath('login.html'));
+      await forceWindowFocus(true);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
   }
 });
-ipcMain.handle('ui:setContext', (_e, ctx) => { store.set('ui:ctx', ctx || {}); return { ok: true }; });
-ipcMain.handle('ui:getContext', () => store.get('ui:ctx') || null);
-ipcMain.handle('ui:clearContext', () => { store.delete('ui:ctx'); return { ok: true }; });
+
+/* ===================== UI CONTEXT (set/get/clear) ===================== */
+ipcMain.handle('ui:setContext', async (_evt, ctx) => {
+  try {
+    store.set('ui:ctx', ctx || {});
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+});
+
+ipcMain.handle('ui:getContext', async () => {
+  try {
+    return store.get('ui:ctx') || null;
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle('ui:clearContext', async () => {
+  try {
+    store.delete('ui:ctx');
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+});
+
 
 /* ===================== HELPERS ORDERS ===================== */
 function calcularTotal(partidas = []) {
@@ -138,7 +197,6 @@ async function asegurarCliente({ nombre, telefono, correo, rfc, factura, canal }
   return ins.rows[0].id;
 }
 
-// === normalizador con ids de partida ===
 function normalizarPedidoPayload(payload) {
   const c = payload.cliente || payload.client || {};
   const cliente = {
@@ -338,8 +396,6 @@ ipcMain.handle('orders:save', async (_evt, payloadRaw) => {
     const toDelete = [...existingIds].filter(id => !keptIds.has(id));
     if (toDelete.length) {
       await query(`DELETE FROM partidas WHERE pedido_id=$1 AND id = ANY($2)`, [pedidoId, toDelete]);
-      // Si tu FK en disenos no es CASCADE por partida, también limpia:
-      // await query(`DELETE FROM disenos WHERE pedido_id=$1 AND partida_id = ANY($2)`, [pedidoId, toDelete]);
     }
 
     await query(`UPDATE pedidos SET actualizado_en=NOW() WHERE id=$1`, [pedidoId]);
@@ -371,15 +427,43 @@ ipcMain.handle('orders:list', async (_evt, filtros = {}) => {
 
   const sql = `
     SELECT p.id, p.folio, c.nombre AS cliente, p.estado,
-           p.fecha_entrega, p.actualizado_en, p.total
+           p.fecha_entrega, p.actualizado_en, p.total, p.orden_prio, p.pinned
     FROM pedidos p
     LEFT JOIN clientes c ON c.id = p.cliente_id
     ${where}
-    ORDER BY p.actualizado_en DESC
+    ORDER BY p.pinned DESC, p.orden_prio DESC NULLS LAST, p.actualizado_en DESC
     LIMIT 500
   `;
   const { rows } = await query(sql, params);
   return rows;
+});
+
+
+/** NUEVO: guardar orden/prioridad visual de una lista de pedidos */
+ipcMain.handle('orders:setOrder', async (_evt, idsRaw) => {
+  try {
+    const ids = (Array.isArray(idsRaw) ? idsRaw : []).map(n => Number(n)).filter(n => Number.isInteger(n) && n > 0);
+    if (!ids.length) return { ok: false, error: 'Lista vacía' };
+
+    // Asignar pesos altos al primero, decreciendo.
+    // Usamos base = epoch segundos para reducir colisiones entre llamadas.
+    const base = Math.floor(Date.now() / 1000) + ids.length;
+    const ords = ids.map((_, i) => base - i); // mayor = más prioridad
+
+    await query(`
+      WITH data AS (
+        SELECT unnest($1::int[]) AS id, unnest($2::int[]) AS ord
+      )
+      UPDATE pedidos p
+         SET orden_prio = d.ord
+        FROM data d
+       WHERE p.id = d.id
+    `, [ids, ords]);
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.detail || e.message || 'No se pudo guardar el orden' };
+  }
 });
 
 ipcMain.handle('orders:get', async (_evt, id) => {
@@ -433,17 +517,13 @@ ipcMain.handle('orders:recalcTotals', async (_evt, pedidoId) => {
   return { ok: true, total };
 });
 
-/** Eliminar pedido (con cascada manual por si faltan FKs) */
 ipcMain.handle('orders:delete', async (_evt, pedidoIdRaw) => {
   const pedidoId = Number(pedidoIdRaw || 0);
   if (!pedidoId) return { ok: false, error: 'ID inválido' };
   await query('BEGIN');
   try {
-    // Primero disenos (por si el FK no es cascade por partida)
     await query(`DELETE FROM disenos WHERE pedido_id=$1`, [pedidoId]);
-    // Luego partidas del pedido
     await query(`DELETE FROM partidas WHERE pedido_id=$1`, [pedidoId]);
-    // Finalmente el pedido
     await query(`DELETE FROM pedidos WHERE id=$1`, [pedidoId]);
     await query('COMMIT');
     return { ok: true };
@@ -499,7 +579,6 @@ ipcMain.handle('media:upload', async (_evt, payload) => {
 
   const sha = sha256Base64(dataUrlOrBase64);
   const base64 = dataUrlOrBase64.replace(/^data:[^,]+,/, '');
-  const ext = (filename.split('.').pop() || '').toLowerCase() || null;
 
   const bytes = Math.max(0,
     Math.floor(base64.length * 3 / 4) - (base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0)
@@ -507,13 +586,12 @@ ipcMain.handle('media:upload', async (_evt, payload) => {
 
   const sql = `
     INSERT INTO medios
-      (nombre_archivo, tipo_mime, extension, ancho_px, alto_px,
+      (nombre_archivo, tipo_mime, ancho_px, alto_px,
        datos, huella_sha256, origen, bytes, creado_en)
-    VALUES ($1,$2,$3,$4,$5, decode($6,'base64'), $7,$8,$9, NOW())
+    VALUES ($1,$2,$3,$4, decode($5,'base64'), $6,$7,$8, NOW())
     ON CONFLICT (huella_sha256) DO UPDATE
       SET nombre_archivo = EXCLUDED.nombre_archivo,
           tipo_mime      = EXCLUDED.tipo_mime,
-          extension      = EXCLUDED.extension,
           ancho_px       = EXCLUDED.ancho_px,
           alto_px        = EXCLUDED.alto_px,
           origen         = EXCLUDED.origen,
@@ -522,7 +600,7 @@ ipcMain.handle('media:upload', async (_evt, payload) => {
               huella_sha256, origen, creado_en,
               encode(datos,'base64') AS b64
   `;
-  const { rows } = await query(sql, [filename, mime, ext, w, h, base64, sha, origin, bytes]);
+  const { rows } = await query(sql, [filename, mime, w, h, base64, sha, origin, bytes]);
   const row = rows[0];
 
   return {
@@ -600,8 +678,7 @@ ipcMain.handle('design:listByPedido', async (_evt, pedidoId) => {
   }));
 });
 
-/* ===================== CLIENTES (búsqueda/autofill) ===================== */
-/** Buscar clientes por nombre/correo/teléfono (para datalist) */
+/* ===================== CLIENTES ===================== */
 ipcMain.handle('clientes:search', async (_evt, qRaw) => {
   const q = String(qRaw || '').trim();
   if (!q) return [];
@@ -625,7 +702,6 @@ ipcMain.handle('clientes:search', async (_evt, qRaw) => {
   }));
 });
 
-/** Obtener 1 cliente por correo o teléfono (para autocompletar en blur) */
 ipcMain.handle('clientes:findOne', async (_evt, { correo=null, telefono=null } = {}) => {
   if (!correo && !telefono) return null;
   const sql = `
@@ -645,7 +721,6 @@ ipcMain.handle('clientes:findOne', async (_evt, { correo=null, telefono=null } =
   };
 });
 
-/** Obtener cliente por id (para recordar último cliente usado) */
 ipcMain.handle('clientes:get', async (_evt, idRaw) => {
   const id = Number(idRaw || 0);
   if (!id) return null;
@@ -657,3 +732,60 @@ ipcMain.handle('clientes:get', async (_evt, idRaw) => {
     rfc: r.rfc, facturar: !!r.facturar, canal: r.canal
   };
 });
+
+// ========== Pin (Fijar pedidos arriba) ==========
+const PIN_TOP = 2000000000; // valor alto pero dentro de INT32
+
+/** Fijar o quitar pin (global) */
+ipcMain.handle('orders:togglePin', async (_evt, { id, pin }) => {
+  try {
+    const pid = Number(id || 0);
+    if (!pid) return { ok: false, error: 'ID inválido' };
+
+    // Al fijar, ponemos orden_prio con epoch para que el último pin suba dentro del grupo fijado
+    const epoch = Math.floor(Date.now() / 1000);
+
+    await query(
+      `UPDATE pedidos
+         SET pinned = $2,
+             orden_prio = CASE WHEN $2 THEN GREATEST(COALESCE(orden_prio,0), $3) ELSE GREATEST($3, COALESCE(orden_prio,0)) END,
+             actualizado_en = NOW()
+       WHERE id = $1`,
+      [pid, !!pin, epoch]
+    );
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.detail || e.message || 'No se pudo cambiar el pin' };
+  }
+});
+
+
+/** Guardar el orden de los pedidos fijados (arriba) */
+ipcMain.handle('orders:setPinnedOrder', async (_evt, idsRaw) => {
+  try {
+    const ids = (Array.isArray(idsRaw) ? idsRaw : [])
+      .map(n => Number(n))
+      .filter(n => Number.isInteger(n) && n > 0);
+    if (!ids.length) return { ok: false, error: 'Lista vacía' };
+
+    // Base descendente (mayor = más arriba)
+    const base = Math.floor(Date.now() / 1000) + ids.length;
+    const ords = ids.map((_, i) => base - i);
+
+    await query(`
+      WITH data AS (
+        SELECT unnest($1::int[]) AS id, unnest($2::int[]) AS ord
+      )
+      UPDATE pedidos p
+         SET orden_prio = d.ord, actualizado_en = NOW()
+        FROM data d
+       WHERE p.id = d.id AND p.pinned = TRUE
+    `, [ids, ords]);
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.detail || e.message || 'No se pudo guardar el orden de fijados' };
+  }
+});
+
